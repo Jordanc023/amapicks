@@ -461,7 +461,7 @@ class DirectoresCog(commands.Cog):
             await agentes_col.delete_one({'discord_id': str(usuario.id)})
 
             # 3. Enviar Embed con URL interactiva
-            base_url = "http://104.243.47.46" # Reemplazar en prod por variable de entorno
+            base_url = "http://20.81.152.127:5173" # Reemplazar en prod por variable de entorno
             
             embed = discord.Embed(
                 title="🎫 ¡LICENCIA DE FUNDADOR OTORGADA! 🎫",

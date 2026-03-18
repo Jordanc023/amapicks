@@ -6,7 +6,7 @@ import { Shield, Sparkles, Paintbrush, Link as LinkIcon, AlertCircle, CheckCircl
 
 // Setup local api instance just for this view so it embeds token automatically
 const api = axios.create({
-    baseURL: 'http://104.243.47.46/api',
+    baseURL: 'http://20.81.152.127:8001/api',
 });
 api.interceptors.request.use((config) => {
     const token = localStorage.getItem('token');

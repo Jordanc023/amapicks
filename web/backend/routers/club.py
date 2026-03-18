@@ -85,7 +85,7 @@ async def fundar_club(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al guardar la imagen en el servidor: {str(e)}")
         
-    public_logo_url = f"http://104.243.47.46/uploads/escudos/{unique_filename}"
+    public_logo_url = f"http://20.81.152.127:8001/uploads/escudos/{unique_filename}"
 
     # 4. Enviar a colección temporal para que el Bot lo procese
     await pendientes_col.insert_one({
