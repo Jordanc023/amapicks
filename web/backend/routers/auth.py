@@ -40,8 +40,8 @@ DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 # Ajusta esto si tu puerto/dominio cambia.
 # Debe coincidir EXACTAMENTE con lo que pongas en Discord Dev Portal
-DISCORD_REDIRECT_URI = "http://104.243.47.46/api/auth/callback" 
-FRONTEND_URL = "http://104.243.47.46"
+DISCORD_REDIRECT_URI = "http://20.81.152.127:8001/api/auth/callback" 
+FRONTEND_URL = "http://20.81.152.127:5173"
 
 SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey_cambiar_en_produccion")
 ALGORITHM = "HS256"

@@ -31,7 +31,7 @@ export const AuthProvider = ({ children }) => {
 
     const login = () => {
         // Redirigir al endpoint de login del backend
-        window.location.href = "http://104.243.47.46/api/auth/login";
+        window.location.href = "http://20.81.152.127:8001/api/auth/login";
     };
 
     const logout = () => {
