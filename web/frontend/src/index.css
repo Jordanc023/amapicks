@@ -1,0 +1,47 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Montserrat:wght@400;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    font-family: 'Inter', sans-serif;
+    color-scheme: dark;
+}
+
+body {
+    @apply bg-dark-950 text-gray-200 selection:bg-gold-500/30 selection:text-gold-400;
+    /* Fondo oscuro profundo con un sutil gradiente global */
+    background: radial-gradient(circle at top center, #1a1a1a 0%, #050505 100%);
+    min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    font-family: 'Montserrat', sans-serif;
+}
+
+/* Scrollbar personalizada */
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    @apply bg-dark-950;
+}
+
+::-webkit-scrollbar-thumb {
+    @apply bg-dark-700 rounded-full hover:bg-gold-600/50 transition-colors;
+}
+
+.glass-nav {
+    @apply bg-dark-950/80 backdrop-blur-md border-b border-white/5;
+}
+
+.card-hover {
+    @apply transition-all duration-300 hover:transform hover:-translate-y-1 hover:shadow-gold;
+}
