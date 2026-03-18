@@ -64,9 +64,7 @@ const CrearEquipo = () => {
         data.append('logo', formData.logo);
 
         try {
-            const res = await api.post('/club/fundar', data, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
+            const res = await api.post('/club/fundar', data);
             setStatus({ status: 'success', message: res.data.message });
         } catch (error) {
             const msg = error.response?.data?.detail || "Ha ocurrido un error al intentar fundar tu club.";
