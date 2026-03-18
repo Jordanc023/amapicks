@@ -54,20 +54,32 @@ const CrearEquipo = () => {
         setStatus({ status: 'loading', message: '' });
 
         if (!formData.logo) {
-            setStatus({ status: 'error', message: 'Por favor, selecciona una imagen para el escudo.' });
+            setStatus({ status: 'error', message: 'Por favor, introduce una dirección URL para el escudo.' });
             return;
         }
 
-        const data = new FormData();
-        data.append('nombre', formData.nombre);
-        data.append('color', formData.color);
-        data.append('logo', formData.logo);
-
         try {
-            const res = await api.post('/club/fundar', data);
+            const payload = {
+                nombre: formData.nombre,
+                color: formData.color,
+                logo_url: formData.logo
+            };
+
+            const res = await api.post('/club/fundar', payload);
             setStatus({ status: 'success', message: res.data.message });
         } catch (error) {
-            const msg = error.response?.data?.detail || "Ha ocurrido un error al intentar fundar tu club.";
+            console.error("Error al crear equipo:", error, error.response?.data);
+            let msg = "Ha ocurrido un error al intentar fundar tu club.";
+            
+            if (error.response?.data?.detail) {
+                // Puede ser un string o un array de errores de validación de FastAPI
+                msg = typeof error.response.data.detail === 'string' 
+                    ? error.response.data.detail 
+                    : "Revisa los datos: " + JSON.stringify(error.response.data.detail);
+            } else if (error.response?.status === 413) {
+                msg = "❌ La imagen es demasiado pesada. El servidor la rechazó. Sube una más ligera.";
+            }
+            
             setStatus({ status: 'error', message: msg });
         }
     };
@@ -176,25 +188,23 @@ const CrearEquipo = () => {
                         <div className="bg-black/40 border border-white/10 p-6 rounded-2xl backdrop-blur-md">
                             <div className="flex items-center gap-2 mb-2">
                                 <LinkIcon className="w-4 h-4 text-gray-400" />
-                                <label className="text-sm font-bold text-gray-300 uppercase tracking-wider block">Escudo del Club</label>
+                                <label className="text-sm font-bold text-gray-300 uppercase tracking-wider block">URL del Escudo del Club</label>
                             </div>
                             <input
-                                type="file"
-                                accept="image/*"
+                                type="url"
                                 required
+                                value={formData.logo || ''}
                                 onChange={(e) => {
-                                    const file = e.target.files[0];
-                                    if (file) {
-                                        setFormData({
-                                            ...formData,
-                                            logo: file,
-                                            logoPreview: URL.createObjectURL(file)
-                                        });
-                                    }
+                                    setFormData({
+                                        ...formData,
+                                        logo: e.target.value,
+                                        logoPreview: e.target.value
+                                    });
                                 }}
-                                className="w-full bg-[#0a0a0a] border border-white/5 rounded-xl px-4 py-3 text-white focus:border-blue-500/50 focus:outline-none transition-colors file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-bold file:bg-[#1a1a1a] file:text-white hover:file:bg-[#2a2a2a] cursor-pointer"
+                                placeholder="https:// ... escudo.png"
+                                className="w-full bg-[#0a0a0a] border border-white/5 rounded-xl px-4 py-3 text-white focus:border-blue-500/50 focus:outline-none transition-colors"
                             />
-                            <p className="text-xs text-gray-500 mt-2">Recomendado: Imagen PNG transparente cuadrada.</p>
+                            <p className="text-xs text-gray-500 mt-2">Si subiste la imagen a Discord, dale click derecho y selecciona "Copiar enlace del mensaje" o "Copiar dirección de la imagen".</p>
                         </div>
 
                         {/* Submit */}
