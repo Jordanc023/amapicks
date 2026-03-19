@@ -30,7 +30,6 @@ class FundarEquipoModal(Modal, title='📝 Fundar tu Club Formador'):
         label='Color Hexadecimal',
         style=discord.TextStyle.short,
         placeholder='#3498db',
-        default='#',
         required=True,
         min_length=7,
         max_length=7
