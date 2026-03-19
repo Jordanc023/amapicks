@@ -64,6 +64,8 @@ class GenerarCalendario(BaseModel):
     hora_default: str = "20:00"
     playoffs_habilitados: bool = True
     clasificados_playoffs: int = 4
+    tipo_liga: str = "estandar" # "estandar" o "d1"
+    dias_pausa_copa: int = 7 # días extra para pausa de copa en D1
 
 # --- System Action Models ---
 class PM2Action(BaseModel):
@@ -431,6 +433,28 @@ def _generar_fixture_round_robin(equipos: List[str]):
     
     return fixture
 
+def _generar_fixture_d1(equipos: List[str]):
+    """Genera fixture D1: IDA y VUELTA (14 jornadas para 8 equipos)."""
+    fixture_ida = _generar_fixture_round_robin(equipos)
+    
+    fixture_vuelta = []
+    offset = len(fixture_ida)
+    
+    for j in fixture_ida:
+        partidos_vuelta = []
+        for p in j["partidos"]:
+            # Cambia la localía
+            partidos_vuelta.append({
+                "equipo_local": p["equipo_visitante"],
+                "equipo_visitante": p["equipo_local"]
+            })
+        fixture_vuelta.append({
+            "jornada": j["jornada"] + offset,
+            "partidos": partidos_vuelta
+        })
+        
+    return fixture_ida + fixture_vuelta
+
 @router.post("/generar_calendario_liga")
 async def generar_calendario_liga(data: GenerarCalendario, admin_user: dict = Depends(require_admin)):
     """Genera automáticamente todo el calendario de liga (round-robin)."""
@@ -446,8 +470,13 @@ async def generar_calendario_liga(data: GenerarCalendario, admin_user: dict = De
     if len(equipos_nombres) < 2:
         raise HTTPException(status_code=400, detail="Se necesitan al menos 2 equipos activos")
     
-    # Generar fixture
-    fixture = _generar_fixture_round_robin(equipos_nombres)
+    if data.tipo_liga == "d1":
+        if len(equipos_nombres) != 8:
+            raise HTTPException(status_code=400, detail="La Liga D1 requiere exactamente 8 equipos")
+        fixture = _generar_fixture_d1(equipos_nombres)
+    else:
+        # Generar fixture
+        fixture = _generar_fixture_round_robin(equipos_nombres)
     
     # Parse fecha inicio
     try:
@@ -459,7 +488,13 @@ async def generar_calendario_liga(data: GenerarCalendario, admin_user: dict = De
     partidos_creados = 0
     for jornada_data in fixture:
         jornada_num = jornada_data["jornada"]
-        fecha_jornada = fecha_inicio + datetime.timedelta(days=(jornada_num - 1) * data.dias_entre_jornadas)
+        
+        # Pausa de copa después de la jornada 7 para D1
+        dias_extra = 0
+        if data.tipo_liga == "d1" and jornada_num > 7:
+            dias_extra = data.dias_pausa_copa
+            
+        fecha_jornada = fecha_inicio + datetime.timedelta(days=(jornada_num - 1) * data.dias_entre_jornadas + dias_extra)
         
         for partido in jornada_data["partidos"]:
             fecha_hora = datetime.combine(

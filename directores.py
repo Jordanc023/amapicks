@@ -31,8 +31,15 @@ class FundarNombreModal(Modal, title='📝 Elegir Nombre'):
         self.view_parent = view
 
     async def on_submit(self, interaction: discord.Interaction):
-        self.view_parent.nombre = self.nombre.value.strip()
-        await self.view_parent.update_message(interaction)
+        try:
+            self.view_parent.nombre = self.nombre.value.strip()
+            await self.view_parent.update_message(interaction)
+        except Exception as e:
+            logger.error(f"Error en FundarNombreModal: {e}", exc_info=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"❌ Error interno: {e}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ Error interno: {e}", ephemeral=True)
 
 
 class FundarColorSelect(discord.ui.Select):
@@ -50,9 +57,19 @@ class FundarColorSelect(discord.ui.Select):
         super().__init__(placeholder="🎨 Elige un color principal", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        view: FundarEquipoView = self.view
-        view.color = self.values[0]
-        await view.update_message(interaction)
+        try:
+            view: FundarEquipoView = self.view
+            view.color = self.values[0]
+            # Mantener la seleccion visual
+            for option in self.options:
+                option.default = (option.value == view.color)
+            await view.update_message(interaction)
+        except Exception as e:
+            logger.error(f"Error en FundarColorSelect: {e}", exc_info=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"❌ Error interno: {e}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ Error interno: {e}", ephemeral=True)
 
 
 class FundarEscudoModal(Modal, title='🖼️ Enlace del Escudo'):
@@ -69,13 +86,20 @@ class FundarEscudoModal(Modal, title='🖼️ Enlace del Escudo'):
         self.view_parent = view
 
     async def on_submit(self, interaction: discord.Interaction):
-        logo_val = self.logo_url.value.strip()
-        if not logo_val.startswith('http'):
-            await interaction.response.send_message("❌ La URL debe empezar con http:// o https://.", ephemeral=True)
-            return
-        
-        self.view_parent.logo_url = logo_val
-        await self.view_parent.update_message(interaction)
+        try:
+            logo_val = self.logo_url.value.strip()
+            if not logo_val.startswith('http'):
+                await interaction.response.send_message("❌ La URL debe empezar con http:// o https://.", ephemeral=True)
+                return
+            
+            self.view_parent.logo_url = logo_val
+            await self.view_parent.update_message(interaction)
+        except Exception as e:
+            logger.error(f"Error en FundarEscudoModal: {e}", exc_info=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"❌ Error interno: {e}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"❌ Error interno: {e}", ephemeral=True)
 
 
 class FundarEquipoView(View):
@@ -97,12 +121,19 @@ class FundarEquipoView(View):
                 child.disabled = not listo
 
     def build_embed(self) -> discord.Embed:
+        # Resolvemos el color de manera segura
+        try:
+            color_val = discord.Color(int(self.color.replace("#", ""), 16)) if self.color else discord.Color.blurple()
+        except:
+            color_val = discord.Color.blurple()
+
         embed = discord.Embed(
             title="🛠️ Panel de Creación de Club",
             description="Completa los siguientes datos para fundar tu equipo.\nUsa los botones debajo para rellenar la información.",
-            color=int(self.color.replace("#", ""), 16) if self.color else discord.Color.blurple()
+            color=color_val
         )
-        embed.set_thumbnail(url=self.user.display_avatar.url)
+        if self.user.display_avatar:
+            embed.set_thumbnail(url=self.user.display_avatar.url)
         
         embed.add_field(name="📝 Nombre", value=f"✅ `{self.nombre}`" if self.nombre else "❌ Pendiente", inline=True)
         embed.add_field(name="🎨 Color", value=f"✅ `{self.color}`" if self.color else "❌ Pendiente", inline=True)
@@ -114,8 +145,20 @@ class FundarEquipoView(View):
         return embed
 
     async def update_message(self, interaction: discord.Interaction):
-        self.actualizar_botones()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+        try:
+            self.actualizar_botones()
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(embed=self.build_embed(), view=self)
+            else:
+                await interaction.message.edit(embed=self.build_embed(), view=self)
+        except Exception as e:
+            logger.error(f"Error en update_message: {e}", exc_info=True)
+            import traceback
+            error_str = f"❌ Ocurrió un error al cargar la vista de Fundación:\n```py\n{traceback.format_exc()[:1500]}\n```"
+            if not interaction.response.is_done():
+                await interaction.response.send_message(error_str, ephemeral=True)
+            else:
+                await interaction.followup.send(error_str, ephemeral=True)
 
     @discord.ui.button(label="📝 Nombre", style=discord.ButtonStyle.secondary, custom_id="btn_nombre", row=1)
     async def btn_nombre(self, interaction: discord.Interaction, button: Button):
@@ -616,14 +659,30 @@ class DirectoresCog(commands.Cog):
             agentes_col = get_collection('agentes_libres')
             await agentes_col.delete_one({'discord_id': str(usuario.id)})
 
+            import datetime
+            fecha = datetime.datetime.now().strftime('%d/%m/%Y')
+            
             # 3. Enviar Embed con las nuevas instrucciones
             embed = discord.Embed(
-                title="🎫 ¡LICENCIA DE FUNDADOR OTORGADA! 🎫",
-                description=f"Felicidades {usuario.mention}, has sido acreditado como Director Técnico oficial por la Administración.\n\n"
-                            f"**Tu siguiente paso es diseñar tu propio club formador:**\n"
-                            f"🪄 Ejecuta el comando `/fundar_equipo` aquí mismo en el servidor para establecer tu insignia y colores.",
-                color=discord.Color.gold()
+                description=(
+                    "╭─────────── 🏟️ ───────────╮\n"
+                    "⠀⠀**LICENCIA DE MÁNAGER PRO**\n"
+                    "╰─────────── ⚽ ───────────╯\n\n"
+                    f"👤 **MÍSTER:** {usuario.mention}\n"
+                    "📄 **RANGO:** Fundador / DT\n"
+                    "✨ **PERMISO:** ✅ **CONFIRMADO**\n\n"
+                    "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n"
+                    "📋 **PRÓXIMO PASO:**\n"
+                    "Ejecuta el comando `/fundar_equipo` aquí en el servidor para registrar y diseñar la identidad visual de tu nuevo club."
+                ),
+                color=0xFFD700  # Dorado profesional
             )
+            if ctx.guild.icon:
+                embed.set_author(name="ADMINISTRACIÓN - ACREDITACIÓN OFICIAL", icon_url=ctx.guild.icon.url)
+            else:
+                embed.set_author(name="ADMINISTRACIÓN - ACREDITACIÓN OFICIAL")
+            
+            embed.set_footer(text=f"Licencia ID: {str(usuario.id)[:6]}-{datetime.datetime.now().strftime('%M%S')} • Emitida: {fecha}")
             embed.set_thumbnail(url=usuario.display_avatar.url)
             
             await ctx.send(content=f"{usuario.mention}", embed=embed)

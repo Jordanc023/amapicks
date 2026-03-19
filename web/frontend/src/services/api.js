@@ -142,13 +142,15 @@ export const ligaService = {
     },
 
     // --- LIGA AUTOMATION ---
-    generarCalendarioLiga: async (diasEntreJornadas, fechaInicio, horaDefault = '20:00', playoffsHabilitados = true, clasificadosPlayoffs = 4) => {
+    generarCalendarioLiga: async (diasEntreJornadas, fechaInicio, horaDefault = '20:00', playoffsHabilitados = true, clasificadosPlayoffs = 4, tipoLiga = 'estandar', diasPausaCopa = 7) => {
         const response = await api.post('/admin/generar_calendario_liga', {
             dias_entre_jornadas: diasEntreJornadas,
             fecha_inicio: fechaInicio,
             hora_default: horaDefault,
             playoffs_habilitados: playoffsHabilitados,
-            clasificados_playoffs: clasificadosPlayoffs
+            clasificados_playoffs: clasificadosPlayoffs,
+            tipo_liga: tipoLiga,
+            dias_pausa_copa: diasPausaCopa
         });
         return response.data;
     },
