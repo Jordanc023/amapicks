@@ -545,7 +545,7 @@ class LigaBot(commands.Bot):
 
             # 5. Borrar petición pendiente
             await pendientes_col.delete_one({"_id": club_pendiente["_id"]})
-            logger.info(f"🏗️ Club '{nombre_equipo}' fundado y registrado correctamente gracias a webhook.")
+            logger.info(f"🏗️ Club '{nombre_equipo}' fundado y registrado correctamente (Automático).")
 
             # 6. Anunciar Nacimiento de Club
             canal_anuncios = discord.utils.get(guild.text_channels, name="anuncios")

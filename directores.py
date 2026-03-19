@@ -4,8 +4,9 @@ Comandos: /dt, /renunciar, /mi_rol
 """
 import asyncio
 import discord
-from discord.ui import View, Button
+from discord.ui import View, Button, Modal, TextInput
 from logger import get_module_logger
+import traceback
 
 logger = get_module_logger("directores")
 from discord.ext import commands
@@ -14,6 +15,88 @@ from datetime import datetime
 import config
 from database import get_collection, log_action
 from utils import es_admin, buscar_equipo
+
+
+class FundarEquipoModal(Modal, title='📝 Fundar tu Club Formador'):
+    nombre = TextInput(
+        label='Nombre del Equipo',
+        style=discord.TextStyle.short,
+        placeholder='Ej. Los Pumas FC',
+        required=True,
+        max_length=50
+    )
+
+    color = TextInput(
+        label='Color Hexadecimal',
+        style=discord.TextStyle.short,
+        placeholder='#3498db',
+        default='#',
+        required=True,
+        min_length=7,
+        max_length=7
+    )
+
+    logo_url = TextInput(
+        label='URL del Escudo (PNG/JPG)',
+        style=discord.TextStyle.short,
+        placeholder='https://midominio.com/logo.png',
+        required=True,
+        max_length=500
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            nombre_val = self.nombre.value.strip()
+            color_val = self.color.value.strip()
+            logo_val = self.logo_url.value.strip()
+
+            if not color_val.startswith('#') or len(color_val) != 7:
+                await interaction.followup.send("❌ El color debe ser un formato Hexadecimal válido (ej. #FF0000).", ephemeral=True)
+                return
+            
+            if not logo_val.startswith('http'):
+                await interaction.followup.send("❌ La URL del logo debe empezar con http:// o https://.", ephemeral=True)
+                return
+
+            equipos_col = get_collection('equipos')
+            nombre_con_guion = f"-{nombre_val.upper()}" if not nombre_val.startswith('-') else nombre_val.upper()
+            existe = await equipos_col.find_one({"nombre": nombre_con_guion})
+            if existe:
+                await interaction.followup.send(f"❌ Ya existe un equipo llamado {nombre_con_guion}. Elige otro nombre.", ephemeral=True)
+                return
+
+            pendientes_col = get_collection("clubes_pendientes_creacion")
+            
+            ya_mandado = await pendientes_col.find_one({"discord_id": str(interaction.user.id)})
+            if ya_mandado:
+                await interaction.followup.send("⚠️ Ya tienes una solicitud en proceso. Por favor espera a que se apruebe.", ephemeral=True)
+                return
+
+            await pendientes_col.insert_one({
+                "discord_id": str(interaction.user.id),
+                "dt_name": interaction.user.name,
+                "nombre": nombre_val,
+                "color": color_val,
+                "logo_url": logo_val,
+                "guild_id": str(interaction.guild_id),
+                "fecha_solicitud": datetime.utcnow()
+            })
+
+            await interaction.followup.send(
+                f"✅ **¡Solicitud enviada con éxito!**\n"
+                f"El club **{nombre_val}** se está procesando. El sistema creará tus canales y rol en unos segundos. Ve revisando tu servidor.",
+                ephemeral=True
+            )
+        except Exception as e:
+            logger.error(f"Error procesando modal FundarEquipoModal: {e}")
+            traceback.print_exc()
+            await interaction.followup.send("❌ Ocurrió un error inesperado al procesar tu solicitud. Contacta a un administrador.", ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        logger.error(f"Error en FundarEquipoModal: {error}")
+        if not interaction.response.is_done():
+            await interaction.response.send_message("❌ Ocurrió un error con el formulario.", ephemeral=True)
 
 
 class DirectoresCog(commands.Cog):
@@ -423,8 +506,7 @@ class DirectoresCog(commands.Cog):
     @commands.hybrid_command(name="licencia_dt", description="Otorga permiso a un usuario para fundar un club en la Web (Admin)")
     async def licencia_dt(self, ctx, usuario: discord.Member):
         """
-        Paso 1 del Fundador de Clubes Híbrido.
-        Da la licencia de DT al usuario y le manda el link web para crear su equipo.
+        Da la licencia de DT al usuario y le permite usar /fundar_equipo.
         """
         await ctx.defer()
         
@@ -450,7 +532,7 @@ class DirectoresCog(commands.Cog):
                     'discord_id': str(usuario.id),
                     'nombre': usuario.name,
                     'es_dt': True,
-                    'equipo': None, # Fundamental para que el frontend habilite la creación
+                    'equipo': None,
                     'guild_id': str(ctx.guild.id)
                 }},
                 upsert=True
@@ -460,31 +542,48 @@ class DirectoresCog(commands.Cog):
             agentes_col = get_collection('agentes_libres')
             await agentes_col.delete_one({'discord_id': str(usuario.id)})
 
-            # 3. Enviar Embed con URL interactiva
-            base_url = "http://20.81.152.127:5173" # Reemplazar en prod por variable de entorno
-            
+            # 3. Enviar Embed con las nuevas instrucciones
             embed = discord.Embed(
                 title="🎫 ¡LICENCIA DE FUNDADOR OTORGADA! 🎫",
                 description=f"Felicidades {usuario.mention}, has sido acreditado como Director Técnico oficial por la Administración.\n\n"
                             f"**Tu siguiente paso es diseñar tu propio club formador:**\n"
-                            f"👇 Ingresa al Panel Web, elige el nombre, colores oficiales y escudo de tu nuevo equipo.",
+                            f"🪄 Ejecuta el comando `/fundar_equipo` aquí mismo en el servidor para establecer tu insignia y colores.",
                 color=discord.Color.gold()
             )
             embed.set_thumbnail(url=usuario.display_avatar.url)
             
-            # Botón estilo enlace Web
-            view = View()
-            btn_web = Button(label="Fundar mi Club en la Web", url=f"{base_url}/crear-equipo", emoji="🌐", style=discord.ButtonStyle.link)
-            view.add_item(btn_web)
-
-            await ctx.send(content=f"{usuario.mention}", embed=embed, view=view)
+            await ctx.send(content=f"{usuario.mention}", embed=embed)
             logger.info(f"🎫 Licencia DT otorgada a {usuario.name} por {ctx.author.name}")
 
         except discord.Forbidden:
-            await ctx.send("❌ No tengo permisos suficientes para signar el rol de DT. (Verifica mis permisos)")
+            await ctx.send("❌ No tengo permisos suficientes para asignar el rol de DT. (Verifica mis permisos)")
         except Exception as e:
             await ctx.send(f"❌ Error inesperado: {e}")
             logger.error(f"Error en licencia_dt: {e}", exc_info=True)
+
+    @commands.hybrid_command(name="fundar_equipo", description="Crea tu propio equipo (Requiere Licencia de DT)")
+    async def fundar_equipo(self, ctx: commands.Context):
+        """Abre el formulario para fundar un nuevo equipo directo en Discord."""
+        if ctx.interaction is None:
+            await ctx.send("❌ Este comando solo puede usarse como slash command (`/fundar_equipo`).", delete_after=10)
+            return
+
+        # Verificar permisos
+        jugadores_col = get_collection('jugadores')
+        jugador = await jugadores_col.find_one({"discord_id": str(ctx.author.id)})
+        
+        # Deben tener es_dt = True y no tener equipo
+        if not jugador or not jugador.get("es_dt", False):
+            await ctx.send("❌ No tienes una **Licencia de DT**. Pide a los administradores que te otorguen una usando `/licencia_dt`.", ephemeral=True)
+            return
+            
+        if jugador.get("equipo"):
+            await ctx.send(f"❌ Ya eres el DT del equipo **{jugador.get('equipo')}**. Debes renunciar primero si quieres fundar uno nuevo.", ephemeral=True)
+            return
+
+        # Abrir ventana Modal
+        modal = FundarEquipoModal()
+        await ctx.interaction.response.send_modal(modal)
 
 async def setup(bot):
     await bot.add_cog(DirectoresCog(bot))

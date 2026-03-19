@@ -11,16 +11,10 @@ load_dotenv()
 
 app = FastAPI(title="AMAPICKS API", version="1.0.0")
 
-# Configuración CORS (Permitir Frontend)
-origins = [
-    "http://localhost:5173",  # Vite default port
-    "http://localhost:3000",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -31,14 +25,14 @@ client = AsyncIOMotorClient(MONGO_URI)
 db = client[os.getenv("DB_NAME", "liga_bot")]
 
 # Importar Routers
-from routers import liga, auth, admin, estadisticas, partidos, club
+from routers import liga, auth, admin, estadisticas, partidos
 
 app.include_router(liga.router, prefix="/api", tags=["liga"])
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(estadisticas.router, prefix="/api", tags=["estadisticas"])
 app.include_router(partidos.router, prefix="/api", tags=["partidos"])
-app.include_router(club.router, prefix="/api", tags=["club"])
+
 
 @app.get("/")
 async def read_root():

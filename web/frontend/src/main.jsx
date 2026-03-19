@@ -10,7 +10,7 @@ import MiEquipo from './pages/MiEquipo';
 import Admin from './pages/Admin';
 import Estadisticas from './pages/Estadisticas';
 import LoginCallback from './pages/LoginCallback';
-import CrearEquipo from './pages/CrearEquipo';
+
 import './index.css';
 
 import { AuthProvider } from './context/AuthContext';
@@ -23,7 +23,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
                     <Route path="/" element={<Layout />}>
                         <Route index element={<Home />} />
                         <Route path="equipo" element={<MiEquipo />} />
-                        <Route path="crear-equipo" element={<CrearEquipo />} />
+
                         <Route path="mercado" element={<Mercado />} />
                         <Route path="equipos" element={<Equipos />} />
                         <Route path="clasificacion" element={<Clasificacion />} />
