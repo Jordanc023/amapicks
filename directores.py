@@ -17,7 +17,7 @@ from database import get_collection, log_action
 from utils import es_admin, buscar_equipo
 
 
-class FundarEquipoModal(Modal, title='📝 Fundar tu Club Formador'):
+class FundarNombreModal(Modal, title='📝 Elegir Nombre'):
     nombre = TextInput(
         label='Nombre del Equipo',
         style=discord.TextStyle.short,
@@ -26,15 +26,36 @@ class FundarEquipoModal(Modal, title='📝 Fundar tu Club Formador'):
         max_length=50
     )
 
-    color = TextInput(
-        label='Color Hexadecimal',
-        style=discord.TextStyle.short,
-        placeholder='#3498db',
-        required=True,
-        min_length=7,
-        max_length=7
-    )
+    def __init__(self, view: "FundarEquipoView"):
+        super().__init__()
+        self.view_parent = view
 
+    async def on_submit(self, interaction: discord.Interaction):
+        self.view_parent.nombre = self.nombre.value.strip()
+        await self.view_parent.update_message(interaction)
+
+
+class FundarColorSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Rojo Carmesí", description="Color Rojo intenso (#E74C3C)", emoji="🔴", value="#E74C3C"),
+            discord.SelectOption(label="Azul Celeste", description="Color Azul brillante (#3498DB)", emoji="🔵", value="#3498DB"),
+            discord.SelectOption(label="Verde Esmeralda", description="Color Verde oscuro (#2ECC71)", emoji="🟢", value="#2ECC71"),
+            discord.SelectOption(label="Amarillo Oro", description="Color Amarillo vibrante (#F1C40F)", emoji="🟡", value="#F1C40F"),
+            discord.SelectOption(label="Naranja Fuego", description="Color Naranja vivo (#E67E22)", emoji="🟠", value="#E67E22"),
+            discord.SelectOption(label="Morado Rey", description="Color Morado oscuro (#9B59B6)", emoji="🟣", value="#9B59B6"),
+            discord.SelectOption(label="Negro Noche", description="Color Negro profundo (#2C3E50)", emoji="⚫", value="#2C3E50"),
+            discord.SelectOption(label="Blanco Puro", description="Color Blanco nieve (#FFFFFF)", emoji="⚪", value="#FFFFFF"),
+        ]
+        super().__init__(placeholder="🎨 Elige un color principal", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        view: FundarEquipoView = self.view
+        view.color = self.values[0]
+        await view.update_message(interaction)
+
+
+class FundarEscudoModal(Modal, title='🖼️ Enlace del Escudo'):
     logo_url = TextInput(
         label='URL del Escudo (PNG/JPG)',
         style=discord.TextStyle.short,
@@ -43,59 +64,113 @@ class FundarEquipoModal(Modal, title='📝 Fundar tu Club Formador'):
         max_length=500
     )
 
+    def __init__(self, view: "FundarEquipoView"):
+        super().__init__()
+        self.view_parent = view
+
     async def on_submit(self, interaction: discord.Interaction):
+        logo_val = self.logo_url.value.strip()
+        if not logo_val.startswith('http'):
+            await interaction.response.send_message("❌ La URL debe empezar con http:// o https://.", ephemeral=True)
+            return
+        
+        self.view_parent.logo_url = logo_val
+        await self.view_parent.update_message(interaction)
+
+
+class FundarEquipoView(View):
+    def __init__(self, user: discord.Member, logo_inicial: str = None):
+        super().__init__(timeout=600.0) # 10 mins timeout
+        self.user = user
+        self.nombre = None
+        self.color = None
+        self.logo_url = logo_inicial
+        
+        self.add_item(FundarColorSelect())
+        self.actualizar_botones()
+
+    def actualizar_botones(self):
+        # Habilitar o Deshabilitar el botón final
+        listo = bool(self.nombre and self.color and self.logo_url)
+        for child in self.children:
+            if isinstance(child, Button) and child.custom_id == "btn_confirmar":
+                child.disabled = not listo
+
+    def build_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title="🛠️ Panel de Creación de Club",
+            description="Completa los siguientes datos para fundar tu equipo.\nUsa los botones debajo para rellenar la información.",
+            color=int(self.color.replace("#", ""), 16) if self.color else discord.Color.blurple()
+        )
+        embed.set_thumbnail(url=self.user.display_avatar.url)
+        
+        embed.add_field(name="📝 Nombre", value=f"✅ `{self.nombre}`" if self.nombre else "❌ Pendiente", inline=True)
+        embed.add_field(name="🎨 Color", value=f"✅ `{self.color}`" if self.color else "❌ Pendiente", inline=True)
+        embed.add_field(name="🖼️ Escudo", value="✅ Cargado" if self.logo_url else "❌ Pendiente", inline=True)
+        
+        if self.logo_url:
+            embed.set_image(url=self.logo_url)
+            
+        return embed
+
+    async def update_message(self, interaction: discord.Interaction):
+        self.actualizar_botones()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    @discord.ui.button(label="📝 Nombre", style=discord.ButtonStyle.secondary, custom_id="btn_nombre", row=1)
+    async def btn_nombre(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(FundarNombreModal(self))
+
+    @discord.ui.button(label="🖼️ Escudo (Link)", style=discord.ButtonStyle.secondary, custom_id="btn_escudo", row=1)
+    async def btn_escudo(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(FundarEscudoModal(self))
+
+    @discord.ui.button(label="✅ CONFIRMAR FUNDACIÓN", style=discord.ButtonStyle.success, custom_id="btn_confirmar", disabled=True, row=2)
+    async def btn_confirmar(self, interaction: discord.Interaction, button: Button):
         await interaction.response.defer(ephemeral=True)
         try:
-            nombre_val = self.nombre.value.strip()
-            color_val = self.color.value.strip()
-            logo_val = self.logo_url.value.strip()
-
-            if not color_val.startswith('#') or len(color_val) != 7:
-                await interaction.followup.send("❌ El color debe ser un formato Hexadecimal válido (ej. #FF0000).", ephemeral=True)
-                return
-            
-            if not logo_val.startswith('http'):
-                await interaction.followup.send("❌ La URL del logo debe empezar con http:// o https://.", ephemeral=True)
-                return
-
             equipos_col = get_collection('equipos')
-            nombre_con_guion = f"-{nombre_val.upper()}" if not nombre_val.startswith('-') else nombre_val.upper()
+            nombre_con_guion = f"-{self.nombre.upper()}" if not self.nombre.startswith('-') else self.nombre.upper()
             existe = await equipos_col.find_one({"nombre": nombre_con_guion})
             if existe:
-                await interaction.followup.send(f"❌ Ya existe un equipo llamado {nombre_con_guion}. Elige otro nombre.", ephemeral=True)
+                await interaction.followup.send(f"❌ Ya existe un equipo llamado {nombre_con_guion}. Elige otro nombre usando el botón 📝 Nombre.", ephemeral=True)
                 return
 
             pendientes_col = get_collection("clubes_pendientes_creacion")
-            
-            ya_mandado = await pendientes_col.find_one({"discord_id": str(interaction.user.id)})
+            ya_mandado = await pendientes_col.find_one({"discord_id": str(self.user.id)})
             if ya_mandado:
                 await interaction.followup.send("⚠️ Ya tienes una solicitud en proceso. Por favor espera a que se apruebe.", ephemeral=True)
                 return
 
             await pendientes_col.insert_one({
-                "discord_id": str(interaction.user.id),
-                "dt_name": interaction.user.name,
-                "nombre": nombre_val,
-                "color": color_val,
-                "logo_url": logo_val,
+                "discord_id": str(self.user.id),
+                "dt_name": self.user.name,
+                "nombre": self.nombre,
+                "color": self.color,
+                "logo_url": self.logo_url,
                 "guild_id": str(interaction.guild_id),
                 "fecha_solicitud": datetime.utcnow()
             })
 
+            # Deshabilitar todo
+            for child in self.children:
+                child.disabled = True
+            
+            embed_exito = self.build_embed()
+            embed_exito.title = "🎉 ¡Solicitud de Fundación Enviada!"
+            embed_exito.description = "El bot está procesando tu solicitud para crear los canales y el rol."
+            await interaction.message.edit(embed=embed_exito, view=self)
+            
             await interaction.followup.send(
                 f"✅ **¡Solicitud enviada con éxito!**\n"
-                f"El club **{nombre_val}** se está procesando. El sistema creará tus canales y rol en unos segundos. Ve revisando tu servidor.",
+                f"El club **{self.nombre}** se está procesando. El sistema creará tus canales y rol en unos segundos. Ve revisando tu servidor.",
                 ephemeral=True
             )
+            
         except Exception as e:
-            logger.error(f"Error procesando modal FundarEquipoModal: {e}")
+            logger.error(f"Error confirmando FundarEquipoView: {e}")
             traceback.print_exc()
             await interaction.followup.send("❌ Ocurrió un error inesperado al procesar tu solicitud. Contacta a un administrador.", ephemeral=True)
-
-    async def on_error(self, interaction: discord.Interaction, error: Exception):
-        logger.error(f"Error en FundarEquipoModal: {error}")
-        if not interaction.response.is_done():
-            await interaction.response.send_message("❌ Ocurrió un error con el formulario.", ephemeral=True)
 
 
 class DirectoresCog(commands.Cog):
@@ -561,8 +636,8 @@ class DirectoresCog(commands.Cog):
             logger.error(f"Error en licencia_dt: {e}", exc_info=True)
 
     @commands.hybrid_command(name="fundar_equipo", description="Crea tu propio equipo (Requiere Licencia de DT)")
-    async def fundar_equipo(self, ctx: commands.Context):
-        """Abre el formulario para fundar un nuevo equipo directo en Discord."""
+    async def fundar_equipo(self, ctx: commands.Context, escudo: discord.Attachment = None):
+        """Abre el panel interactivo para fundar un nuevo equipo directo en Discord."""
         if ctx.interaction is None:
             await ctx.send("❌ Este comando solo puede usarse como slash command (`/fundar_equipo`).", delete_after=10)
             return
@@ -580,9 +655,18 @@ class DirectoresCog(commands.Cog):
             await ctx.send(f"❌ Ya eres el DT del equipo **{jugador.get('equipo')}**. Debes renunciar primero si quieres fundar uno nuevo.", ephemeral=True)
             return
 
-        # Abrir ventana Modal
-        modal = FundarEquipoModal()
-        await ctx.interaction.response.send_modal(modal)
+        logo_url = escudo.url if escudo else None
+
+        # Abrir ventana Dashboard interactiva
+        view = FundarEquipoView(user=ctx.author, logo_inicial=logo_url)
+        embed = view.build_embed()
+        
+        mensaje_tip = ""
+        if not logo_url:
+            mensaje_tip = ("💡 *Tip: Si tienes el logo en tu PC/celular, puedes usar el comando nuevamente adjuntando "
+                           "la imagen en el parámetro 'escudo' para que se cargue automáticamente. Así te evitas poner enlaces.*")
+
+        await ctx.send(content=mensaje_tip, embed=embed, view=view, ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(DirectoresCog(bot))
