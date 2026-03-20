@@ -24,6 +24,7 @@ const Navbar = () => {
         { name: 'Mercado', path: '/mercado' },
         { name: 'Equipos', path: '/equipos' },
         { name: 'Clasificación', path: '/clasificacion' },
+        { name: 'Jornadas', path: '/jornadas' },
         { name: 'Estadísticas', path: '/estadisticas' },
     ];
 

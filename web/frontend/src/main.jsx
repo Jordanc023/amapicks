@@ -6,6 +6,7 @@ import Home from './pages/Home';
 import Mercado from './pages/Mercado';
 import Equipos from './pages/Equipos';
 import Clasificacion from './pages/Clasificacion';
+import Jornadas from './pages/Jornadas';
 import MiEquipo from './pages/MiEquipo';
 import Admin from './pages/Admin';
 import Estadisticas from './pages/Estadisticas';
@@ -27,6 +28,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
                         <Route path="mercado" element={<Mercado />} />
                         <Route path="equipos" element={<Equipos />} />
                         <Route path="clasificacion" element={<Clasificacion />} />
+                        <Route path="jornadas" element={<Jornadas />} />
                         <Route path="estadisticas" element={<Estadisticas />} />
                         <Route path="admin" element={<Admin />} />
                     </Route>
