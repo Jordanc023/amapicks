@@ -483,6 +483,269 @@ async def establecer_liga_activa(data: CambiarLigaActiva):
     }
 
 # ============================================================
+# SISTEMA DE COPA INTERDIVISIONAL AUTOMÁTICA
+# ============================================================
+
+async def _generar_copa_interdivisional_automatica(liga_d1_id: str, liga_d2_id: str, fecha_inicio: str = None):
+    """
+    Genera automáticamente la Copa AMAPICKS al llegar a la jornada 11.
+    
+    FASE 1 - Sembrados (8 equipos directo a octavos):
+        - Top 4 de D1
+        - Top 4 de D2
+    
+    FASE 2 - Ronda Preliminar (16 equipos):
+        - Puestos 5-12 de D1 (8 equipos)
+        - Puestos 5-12 de D2 (8 equipos)
+        - Cruces: 5D1 vs 12D2, 6D1 vs 11D2, etc.
+    
+    FASE 3 - Octavos en adelante:
+        - 8 sembrados + 8 ganadores preliminar
+    """
+    ligas_col = get_collection("ligas")
+    partidos_col = get_collection("partidos")
+    copa_col = get_collection("copa_inscripciones")
+    equipos_col = get_collection("equipos")
+    
+    # Obtener datos de ambas ligas
+    liga_d1 = await ligas_col.find_one({"_id": ObjectId(liga_d1_id)})
+    liga_d2 = await ligas_col.find_one({"_id": ObjectId(liga_d2_id)})
+    
+    if not liga_d1 or not liga_d2:
+        return {"error": "No se encontraron ambas ligas (D1 y D2)"}
+    
+    # Función para calcular tabla de una liga
+    async def calcular_tabla_liga(liga_id):
+        equipos_cursor = equipos_col.find({"liga_id": liga_id})
+        equipos = await equipos_cursor.to_list(length=50)
+        
+        # Obtener partidos finalizados
+        partidos_cursor = partidos_col.find({
+            "liga_id": liga_id,
+            "estado": {"$in": ["finalizado", "walkover", "jugado"]},
+            "jornada": {"$lte": 11}  # Solo hasta jornada 11
+        })
+        partidos = await partidos_cursor.to_list(length=500)
+        
+        # Calcular stats
+        stats = {}
+        for eq in equipos:
+            stats[eq["nombre"]] = {
+                "equipo": eq["nombre"],
+                "pj": 0, "pg": 0, "pe": 0, "pp": 0,
+                "gf": 0, "gc": 0, "pts": 0
+            }
+        
+        for p in partidos:
+            local = p.get("equipo_local")
+            visitante = p.get("equipo_visitante")
+            gl = p.get("goles_local", 0)
+            gv = p.get("goles_visitante", 0)
+            
+            if local in stats:
+                stats[local]["pj"] += 1
+                stats[local]["gf"] += gl
+                stats[local]["gc"] += gv
+            if visitante in stats:
+                stats[visitante]["pj"] += 1
+                stats[visitante]["gf"] += gv
+                stats[visitante]["gc"] += gl
+            
+            if gl > gv:
+                if local in stats:
+                    stats[local]["pg"] += 1
+                    stats[local]["pts"] += 3
+                if visitante in stats:
+                    stats[visitante]["pp"] += 1
+            elif gl < gv:
+                if visitante in stats:
+                    stats[visitante]["pg"] += 1
+                    stats[visitante]["pts"] += 3
+                if local in stats:
+                    stats[local]["pp"] += 1
+            else:
+                if local in stats:
+                    stats[local]["pe"] += 1
+                    stats[local]["pts"] += 1
+                if visitante in stats:
+                    stats[visitante]["pe"] += 1
+                    stats[visitante]["pts"] += 1
+        
+        # Calcular diferencia de goles y ordenar
+        tabla = []
+        for nombre, s in stats.items():
+            s["dg"] = s["gf"] - s["gc"]
+            tabla.append(s)
+        
+        tabla.sort(key=lambda x: (x["pts"], x["dg"], x["gf"]), reverse=True)
+        
+        # Asignar posiciones
+        for i, t in enumerate(tabla, 1):
+            t["pos"] = i
+        
+        return tabla
+    
+    # Calcular tablas
+    tabla_d1 = await calcular_tabla_liga(liga_d1_id)
+    tabla_d2 = await calcular_tabla_liga(liga_d2_id)
+    
+    # FASE 1: Sembrados (Top 4 de cada división)
+    sembrados_d1 = tabla_d1[:4]  # 1°, 2°, 3°, 4°
+    sembrados_d2 = tabla_d2[:4]  # 1°, 2°, 3°, 4°
+    
+    # FASE 2: Preliminar (Puestos 5-12 de cada división)
+    preliminar_d1 = tabla_d1[4:12]  # 5° al 12° (8 equipos)
+    preliminar_d2 = tabla_d2[4:12]  # 5° al 12° (8 equipos)
+    
+    # Verificar que tengamos suficientes equipos
+    if len(preliminar_d1) < 8 or len(preliminar_d2) < 8:
+        return {
+            "error": "No hay suficientes equipos para la copa",
+            "equipos_d1": len(tabla_d1),
+            "equipos_d2": len(tabla_d2),
+            "necesarios": "Mínimo 12 equipos en cada división"
+        }
+    
+    # Limpiar inscripciones anteriores
+    await copa_col.delete_many({"copa_amapicks": True})
+    
+    # Inscribir sembrados
+    inscripciones = []
+    for i, eq in enumerate(sembrados_d1, 1):
+        inscripciones.append({
+            "equipo_id": eq["equipo"],
+            "equipo_nombre": eq["equipo"],
+            "liga_origen": "D1",
+            "posicion_tabla_origen": i,
+            "es_sembrado": True,
+            "ronda_actual": "octavos",
+            "copa_amapicks": True,
+            "created_at": datetime.utcnow()
+        })
+    
+    for i, eq in enumerate(sembrados_d2, 1):
+        inscripciones.append({
+            "equipo_id": eq["equipo"],
+            "equipo_nombre": eq["equipo"],
+            "liga_origen": "D2",
+            "posicion_tabla_origen": i,
+            "es_sembrado": True,
+            "ronda_actual": "octavos",
+            "copa_amapicks": True,
+            "created_at": datetime.utcnow()
+        })
+    
+    # Inscribir preliminar
+    for eq in preliminar_d1:
+        inscripciones.append({
+            "equipo_id": eq["equipo"],
+            "equipo_nombre": eq["equipo"],
+            "liga_origen": "D1",
+            "posicion_tabla_origen": eq["pos"],
+            "es_sembrado": False,
+            "ronda_actual": "preliminar",
+            "copa_amapicks": True,
+            "created_at": datetime.utcnow()
+        })
+    
+    for eq in preliminar_d2:
+        inscripciones.append({
+            "equipo_id": eq["equipo"],
+            "equipo_nombre": eq["equipo"],
+            "liga_origen": "D2",
+            "posicion_tabla_origen": eq["pos"],
+            "es_sembrado": False,
+            "ronda_actual": "preliminar",
+            "copa_amapicks": True,
+            "created_at": datetime.utcnow()
+        })
+    
+    # Guardar inscripciones
+    if inscripciones:
+        await copa_col.insert_many(inscripciones)
+    
+    # Generar partidos de RONDA PRELIMINAR
+    # Cruces: 5D1 vs 12D2, 6D1 vs 11D2, 7D1 vs 10D2, 8D1 vs 9D2
+    #         9D1 vs 8D2, 10D1 vs 7D2, 11D1 vs 6D2, 12D1 vs 5D2
+    
+    fecha_base = datetime.strptime(fecha_inicio, "%Y-%m-%d") if fecha_inicio else datetime.utcnow()
+    
+    partidos_preliminar = []
+    cruces_preliminar = [
+        (0, 7),   # 5° D1 vs 12° D2 (índices 0 y 7 en listas preliminar)
+        (1, 6),   # 6° D1 vs 11° D2
+        (2, 5),   # 7° D1 vs 10° D2
+        (3, 4),   # 8° D1 vs 9° D2
+        (4, 3),   # 9° D1 vs 8° D2
+        (5, 2),   # 10° D1 vs 7° D2
+        (6, 1),   # 11° D1 vs 6° D2
+        (7, 0),   # 12° D1 vs 5° D2
+    ]
+    
+    for idx_d1, idx_d2 in cruces_preliminar:
+        if idx_d1 < len(preliminar_d1) and idx_d2 < len(preliminar_d2):
+            eq_d1 = preliminar_d1[idx_d1]
+            eq_d2 = preliminar_d2[idx_d2]
+            
+            partido = {
+                "guild_id": "0",
+                "copa": True,
+                "copa_amapicks": True,
+                "ronda": "Preliminar",
+                "fase": "Copa AMAPICKS - Preliminar",
+                "equipo_local": eq_d1["equipo"],
+                "liga_local": "D1",
+                "pos_local": eq_d1["pos"],
+                "equipo_visitante": eq_d2["equipo"],
+                "liga_visitante": "D2",
+                "pos_visitante": eq_d2["pos"],
+                "fecha_hora": (fecha_base).isoformat(),
+                "estado": "pendiente",
+                "auto_generado": True,
+                "creado_en": datetime.utcnow()
+            }
+            partidos_preliminar.append(partido)
+    
+    # Insertar partidos preliminar
+    if partidos_preliminar:
+        await partidos_col.insert_many(partidos_preliminar)
+    
+    # Marcar ligas como en parón de copa
+    await ligas_col.update_one(
+        {"_id": ObjectId(liga_d1_id)},
+        {"$set": {
+            "estado": "paron_copa",
+            "copa_generada": True,
+            "updated_at": datetime.utcnow()
+        }}
+    )
+    await ligas_col.update_one(
+        {"_id": ObjectId(liga_d2_id)},
+        {"$set": {
+            "estado": "paron_copa",
+            "copa_generada": True,
+            "updated_at": datetime.utcnow()
+        }}
+    )
+    
+    return {
+        "message": "Copa AMAPICKS generada automáticamente",
+        "sembrados": {
+            "total": 8,
+            "d1": [eq["equipo"] for eq in sembrados_d1],
+            "d2": [eq["equipo"] for eq in sembrados_d2]
+        },
+        "preliminar": {
+            "total": 16,
+            "partidos": len(partidos_preliminar),
+            "d1": [eq["equipo"] for eq in preliminar_d1],
+            "d2": [eq["equipo"] for eq in preliminar_d2]
+        },
+        "partidos_preliminar_creados": len(partidos_preliminar),
+        "total_inscritos": len(inscripciones)
+    }
+
+# ============================================================
 # FIXTURE GENERATION PARA LIGAS
 # ============================================================
 
@@ -646,6 +909,7 @@ async def avanzar_jornada_liga(liga_id: str):
     """
     Avanza a la siguiente jornada de la liga.
     Verifica si se debe activar el parón de copa.
+    Si es jornada 11, genera automáticamente la Copa AMAPICKS interdivisional.
     """
     ligas_col = get_collection("ligas")
     partidos_col = get_collection("partidos")
@@ -673,7 +937,7 @@ async def avanzar_jornada_liga(liga_id: str):
     
     nueva_jornada = jornada_actual + 1
     
-    # Verificar si es el parón de copa
+    # Verificar si es el parón de copa (jornada 11)
     es_paron_copa = nueva_jornada > jornada_paron and jornada_actual <= jornada_paron
     
     update_data = {
@@ -681,8 +945,11 @@ async def avanzar_jornada_liga(liga_id: str):
         "updated_at": datetime.utcnow()
     }
     
+    resultado_copa = None
+    
     if es_paron_copa:
         update_data["estado"] = "paron_copa"
+        
         # Abrir mercado e inscripción a copa
         await config_liga_col.update_one(
             {"liga_id": liga_id},
@@ -690,15 +957,31 @@ async def avanzar_jornada_liga(liga_id: str):
                 "mercado_abierto": True,
                 "inscripcion_copa_abierta": True,
                 "updated_at": datetime.utcnow()
-            }}
+            }},
+            upsert=True
         )
+        
+        # Generar Copa AMAPICKS automáticamente
+        # Buscar ligas D1 y D2
+        liga_d1 = await ligas_col.find_one({"division": "D1", "activa": True})
+        liga_d2 = await ligas_col.find_one({"division": "D2", "activa": True})
+        
+        if liga_d1 and liga_d2:
+            try:
+                resultado_copa = await _generar_copa_interdivisional_automatica(
+                    str(liga_d1["_id"]),
+                    str(liga_d2["_id"])
+                )
+            except Exception as e:
+                print(f"Error generando copa automática: {e}")
+                resultado_copa = {"error": str(e)}
     
     await ligas_col.update_one(
         {"_id": ObjectId(liga_id)},
         {"$set": update_data}
     )
     
-    return {
+    respuesta = {
         "message": f"Jornada avanzada a {nueva_jornada}",
         "jornada_anterior": jornada_actual,
         "jornada_actual": nueva_jornada,
@@ -706,6 +989,11 @@ async def avanzar_jornada_liga(liga_id: str):
         "mercado_abierto": es_paron_copa,
         "inscripcion_copa_abierta": es_paron_copa
     }
+    
+    if resultado_copa:
+        respuesta["copa_generada"] = resultado_copa
+    
+    return respuesta
 
 @router.get("/ligas/{liga_id}/estado")
 async def obtener_estado_liga_detallado(liga_id: str):
