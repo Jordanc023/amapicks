@@ -681,6 +681,78 @@ const LigasManagerTab = () => {
                                 </div>
                             </div>
 
+                            {/* NUEVO: Configuración de Copa */}
+                            <div className="border-t border-white/10 pt-4 mt-4">
+                                <h4 className="text-sm font-medium text-white mb-3">🏆 Configuración de Copa</h4>
+                                <div className="grid grid-cols-2 gap-4 mb-3">
+                                    <div className="flex items-center gap-3 bg-black/20 p-3 rounded-lg">
+                                        <input
+                                            type="checkbox"
+                                            id="copa-habilitada"
+                                            checked={createForm.copa_habilitada !== false}
+                                            onChange={(e) => setCreateForm({ ...createForm, copa_habilitada: e.target.checked })}
+                                            className="w-4 h-4 rounded border-purple-500 text-purple-500 focus:ring-purple-500"
+                                        />
+                                        <label htmlFor="copa-habilitada" className="text-sm text-gray-300">Habilitar Copa</label>
+                                    </div>
+                                    <div className="flex items-center gap-3 bg-black/20 p-3 rounded-lg">
+                                        <input
+                                            type="checkbox"
+                                            id="ronda-preliminar"
+                                            checked={createForm.ronda_preliminar !== false}
+                                            onChange={(e) => setCreateForm({ ...createForm, ronda_preliminar: e.target.checked })}
+                                            className="w-4 h-4 rounded border-purple-500 text-purple-500 focus:ring-purple-500"
+                                            disabled={!createForm.copa_habilitada}
+                                        />
+                                        <label htmlFor="ronda-preliminar" className="text-sm text-gray-300">Ronda Preliminar</label>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-xs text-gray-500 block mb-1">Total Equipos Copa</label>
+                                        <input
+                                            type="number"
+                                            min="16"
+                                            max="32"
+                                            value={createForm.equipos_copa_total || 24}
+                                            onChange={(e) => setCreateForm({ ...createForm, equipos_copa_total: parseInt(e.target.value) || 24 })}
+                                            className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-white focus:border-gold-500/50 focus:outline-none"
+                                            disabled={!createForm.copa_habilitada}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-gray-500 block mb-1">Equipos Sembrados (Directo a Octavos)</label>
+                                        <input
+                                            type="number"
+                                            min="4"
+                                            max="16"
+                                            value={createForm.equipos_sembrados || 8}
+                                            onChange={(e) => setCreateForm({ ...createForm, equipos_sembrados: parseInt(e.target.value) || 8 })}
+                                            className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-white focus:border-gold-500/50 focus:outline-none"
+                                            disabled={!createForm.copa_habilitada}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* NUEVO: Configuración Factor Rival */}
+                            <div className="border-t border-white/10 pt-4">
+                                <h4 className="text-sm font-medium text-white mb-3">📊 Factor Rival (Bono Valor de Mercado)</h4>
+                                <div className="flex items-center gap-3 bg-black/20 p-3 rounded-lg">
+                                    <input
+                                        type="checkbox"
+                                        id="factor-rival"
+                                        checked={createForm.factor_rival_habilitado !== false}
+                                        onChange={(e) => setCreateForm({ ...createForm, factor_rival_habilitado: e.target.checked })}
+                                        className="w-4 h-4 rounded border-blue-500 text-blue-500 focus:ring-blue-500"
+                                    />
+                                    <div>
+                                        <label htmlFor="factor-rival" className="text-sm text-gray-300">Habilitar Factor Rival</label>
+                                        <p className="text-xs text-gray-500">Ganar al 1° siendo el 12° otorga bono máximo de valor de mercado</p>
+                                    </div>
+                                </div>
+                            </div>
+
                             <div className="flex items-center gap-3 bg-black/20 p-3 rounded-lg">
                                 <input
                                     type="checkbox"

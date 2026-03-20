@@ -27,6 +27,12 @@ class LigaBase(BaseModel):
     jornada_paron_copa: int = 11  # Jornada donde se detiene la liga para copa
     activa: bool = True
     color_identificacion: str = "#FFD700"  # Color para UI
+    # NUEVO: Configuración de Copa
+    copa_habilitada: bool = True
+    equipos_copa_total: int = 24  # Total de equipos en copa
+    equipos_sembrados: int = 8  # Top 8 van directo a octavos
+    ronda_preliminar: bool = True  # 16 equipos juegan preliminar
+    factor_rival_habilitado: bool = True  # Sistema de bono por dificultad
 
 class LigaCreate(LigaBase):
     pass
@@ -46,6 +52,12 @@ class LigaUpdate(BaseModel):
     jornada_paron_copa: Optional[int] = None
     activa: Optional[bool] = None
     color_identificacion: Optional[str] = None
+    # NUEVO: Configuración Copa
+    copa_habilitada: Optional[bool] = None
+    equipos_copa_total: Optional[int] = None
+    equipos_sembrados: Optional[int] = None
+    ronda_preliminar: Optional[bool] = None
+    factor_rival_habilitado: Optional[bool] = None
 
 class LigaResponse(LigaBase):
     id: str
@@ -757,3 +769,364 @@ async def obtener_estado_liga_detallado(liga_id: str):
             "proximo": liga.get("jornada_actual", 1) == liga.get("jornada_paron_copa", 11)
         }
     }
+
+# ============================================================
+# SISTEMA DE COPA (24 EQUIPOS)
+# ============================================================
+
+class InscribirEquipoCopa(BaseModel):
+    equipo_id: str
+    liga_origen_id: Optional[str] = None  # Para equipos invitados de otras ligas
+
+class GenerarBracketCopa(BaseModel):
+    fecha_inicio: str
+    dias_entre_rondas: int = 3
+    hora_default: str = "20:00"
+
+@router.post("/ligas/{liga_id}/copa/inscribir")
+async def inscribir_equipo_copa(liga_id: str, data: InscribirEquipoCopa):
+    """
+    Inscribe un equipo a la copa de la liga.
+    """
+    ligas_col = get_collection("ligas")
+    equipos_col = get_collection("equipos")
+    copa_col = get_collection("copa_inscripciones")
+    
+    # Verificar liga
+    liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    if not liga:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    if not liga.get("copa_habilitada", True):
+        raise HTTPException(status_code=400, detail="La copa no está habilitada para esta liga")
+    
+    # Buscar equipo
+    equipo = await equipos_col.find_one({
+        "$or": [
+            {"_id": ObjectId(data.equipo_id) if len(data.equipo_id) == 24 else {"$ne": None}},
+            {"nombre": data.equipo_id}
+        ]
+    })
+    
+    if not equipo:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    
+    # Verificar si ya está inscrito
+    existente = await copa_col.find_one({
+        "liga_id": liga_id,
+        "equipo_id": str(equipo.get("_id"))
+    })
+    
+    if existente:
+        raise HTTPException(status_code=400, detail="El equipo ya está inscrito en la copa")
+    
+    # Contar inscripciones actuales
+    total_inscritos = await copa_col.count_documents({"liga_id": liga_id})
+    max_equipos = liga.get("equipos_copa_total", 24)
+    
+    if total_inscritos >= max_equipos:
+        raise HTTPException(status_code=400, detail=f"La copa ya tiene {max_equipos} equipos inscritos")
+    
+    # Inscribir equipo
+    inscripcion = {
+        "liga_id": liga_id,
+        "equipo_id": str(equipo.get("_id")),
+        "equipo_nombre": equipo.get("nombre"),
+        "liga_origen_id": data.liga_origen_id or liga_id,
+        "posicion_tabla_origen": None,  # Se actualiza al generar bracket
+        "es_sembrado": False,
+        "ronda_actual": None,
+        "orden_sorteo": total_inscritos + 1,
+        "created_at": datetime.utcnow()
+    }
+    
+    await copa_col.insert_one(inscripcion)
+    
+    return {
+        "message": f"Equipo '{equipo.get('nombre')}' inscrito en la copa",
+        "equipo": equipo.get("nombre"),
+        "total_inscritos": total_inscritos + 1,
+        "cupo_disponible": max_equipos - (total_inscritos + 1)
+    }
+
+@router.get("/ligas/{liga_id}/copa/inscripciones")
+async def listar_inscripciones_copa(liga_id: str):
+    """
+    Lista todos los equipos inscritos en la copa.
+    """
+    copa_col = get_collection("copa_inscripciones")
+    
+    inscripciones_cursor = copa_col.find({"liga_id": liga_id}).sort("orden_sorteo", 1)
+    inscripciones = await inscripciones_cursor.to_list(length=50)
+    
+    return [
+        {
+            "id": str(insc.get("_id")),
+            "equipo_id": insc.get("equipo_id"),
+            "equipo_nombre": insc.get("equipo_nombre"),
+            "es_sembrado": insc.get("es_sembrado", False),
+            "posicion_tabla_origen": insc.get("posicion_tabla_origen"),
+            "ronda_actual": insc.get("ronda_actual"),
+            "orden_sorteo": insc.get("orden_sorteo")
+        }
+        for insc in inscripciones
+    ]
+
+@router.post("/ligas/{liga_id}/copa/sembrar")
+async def sembrar_equipos_copa(liga_id: str):
+    """
+    Marca los top N equipos como sembrados para ir directo a octavos.
+    Por defecto: top 8 de la tabla.
+    """
+    ligas_col = get_collection("ligas")
+    copa_col = get_collection("copa_inscripciones")
+    tabla_col = get_collection("tabla_posiciones")
+    
+    liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    if not liga:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    equipos_sembrados = liga.get("equipos_sembrados", 8)
+    
+    # Obtener tabla de posiciones
+    tabla_cursor = tabla_col.find({"liga_id": liga_id}).sort([
+        ("pts", -1),
+        ("dif", -1),
+        ("gf", -1)
+    ]).limit(equipos_sembrados)
+    
+    tabla = await tabla_cursor.to_list(length=equipos_sembrados)
+    
+    sembrados = []
+    for i, equipo_tabla in enumerate(tabla, 1):
+        equipo_nombre = equipo_tabla.get("equipo")
+        
+        # Actualizar inscripción
+        result = await copa_col.update_one(
+            {"liga_id": liga_id, "equipo_nombre": equipo_nombre},
+            {"$set": {
+                "es_sembrado": True,
+                "posicion_tabla_origen": i,
+                "ronda_actual": "octavos",
+                "updated_at": datetime.utcnow()
+            }}
+        )
+        
+        if result.matched_count > 0:
+            sembrados.append({
+                "posicion": i,
+                "equipo": equipo_nombre
+            })
+    
+    return {
+        "message": f"{len(sembrados)} equipos marcados como sembrados",
+        "sembrados": sembrados,
+        "total_sembrados": equipos_sembrados
+    }
+
+@router.post("/ligas/{liga_id}/copa/generar-bracket")
+async def generar_bracket_copa(liga_id: str, data: GenerarBracketCopa):
+    """
+    Genera el bracket completo de la copa incluyendo:
+    - Ronda Preliminar (16 equipos no sembrados)
+    - Octavos de Final (8 sembrados + 8 ganadores preliminar)
+    - Cuartos, Semifinal, Final
+    """
+    ligas_col = get_collection("ligas")
+    copa_col = get_collection("copa_inscripciones")
+    partidos_col = get_collection("partidos")
+    
+    liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    if not liga:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    # Obtener equipos inscritos
+    inscripciones_cursor = copa_col.find({"liga_id": liga_id})
+    inscripciones = await inscripciones_cursor.to_list(length=50)
+    
+    if len(inscripciones) < 16:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Se necesitan al menos 16 equipos inscritos. Actualmente: {len(inscripciones)}"
+        )
+    
+    # Separar sembrados y no sembrados
+    sembrados = [i for i in inscripciones if i.get("es_sembrado", False)]
+    no_sembrados = [i for i in inscripciones if not i.get("es_sembrado", False)]
+    
+    # Parse fecha inicio
+    try:
+        from datetime import datetime as dt, timedelta
+        fecha_base = dt.strptime(data.fecha_inicio, "%Y-%m-%d")
+    except:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+    
+    partidos_creados = []
+    
+    # Generar Ronda Preliminar si está habilitada
+    if liga.get("ronda_preliminar", True) and len(no_sembrados) >= 16:
+        # Emparejar no sembrados aleatoriamente
+        import random
+        random.shuffle(no_sembrados)
+        
+        for i in range(0, min(16, len(no_sembrados)), 2):
+            if i + 1 < len(no_sembrados):
+                fecha_partido = fecha_base + timedelta(days=0)  # Mismo día
+                
+                partido = {
+                    "guild_id": "0",
+                    "liga_id": liga_id,
+                    "copa": True,
+                    "ronda": "Preliminar",
+                    "equipo_local": no_sembrados[i]["equipo_nombre"],
+                    "equipo_visitante": no_sembrados[i+1]["equipo_nombre"],
+                    "fecha_hora": datetime.combine(
+                        fecha_partido.date(),
+                        datetime.strptime(data.hora_default, "%H:%M").time()
+                    ).isoformat(),
+                    "estado": "pendiente",
+                    "fase": "Copa - Preliminar",
+                    "auto_generado": True,
+                    "creado_en": datetime.utcnow()
+                }
+                
+                await partidos_col.insert_one(partido)
+                partidos_creados.append(partido)
+    
+    # Actualizar estado de la liga
+    await ligas_col.update_one(
+        {"_id": ObjectId(liga_id)},
+        {"$set": {
+            "copa_bracket_generado": True,
+            "copa_fecha_inicio": data.fecha_inicio,
+            "updated_at": datetime.utcnow()
+        }}
+    )
+    
+    return {
+        "message": "Bracket de copa generado exitosamente",
+        "partidos_preliminar_creados": len(partidos_creados),
+        "equipos_sembrados": len(sembrados),
+        "equipos_preliminar": len(no_sembrados),
+        "fecha_inicio": data.fecha_inicio
+    }
+
+# ============================================================
+# SISTEMA DE FACTOR RIVAL (BONO POR DIFICULTAD)
+# ============================================================
+
+@router.get("/ligas/{liga_id}/factor-rival/calcular")
+async def calcular_factor_rival(liga_id: str, equipo_ganador: str, equipo_perdedor: str):
+    """
+    Calcula el bono de Factor Rival para un partido.
+    Ganar al 1° siendo el 12° otorga bono máximo.
+    Formula: bono = (posicion_rival - posicion_ganador) * factor_base
+    """
+    tabla_col = get_collection("tabla_posiciones")
+    ligas_col = get_collection("ligas")
+    
+    liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    if not liga:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    if not liga.get("factor_rival_habilitado", True):
+        return {
+            "factor_rival_activo": False,
+            "message": "Factor Rival no está habilitado en esta liga"
+        }
+    
+    # Obtener posiciones actuales
+    tabla_cursor = tabla_col.find({"liga_id": liga_id}).sort([
+        ("pts", -1),
+        ("dif", -1),
+        ("gf", -1)
+    ])
+    
+    tabla = await tabla_cursor.to_list(length=50)
+    
+    # Crear mapa de posiciones
+    posiciones = {}
+    for i, equipo_tabla in enumerate(tabla, 1):
+        posiciones[equipo_tabla.get("equipo")] = i
+    
+    pos_ganador = posiciones.get(equipo_ganador)
+    pos_perdedor = posiciones.get(equipo_perdedor)
+    
+    if not pos_ganador or not pos_perdedor:
+        return {
+            "factor_rival_activo": True,
+            "error": "No se encontraron posiciones para uno o ambos equipos",
+            "bono_valor_mercado": 0
+        }
+    
+    # Calcular diferencia de posiciones
+    diferencia = pos_perdedor - pos_ganador
+    
+    # Factor base: cada posición de diferencia = 5% de bono
+    # Ganar al 1° siendo el 12° = (12-1) * 5% = 55% bono máximo (con tope en 50%)
+    factor_base = 0.05  # 5% por posición
+    bono_porcentaje = min(diferencia * factor_base, 0.50)  # Tope 50%
+    
+    # Solo aplicar si el ganador está por debajo del perdedor en la tabla
+    if pos_ganador >= pos_perdedor:
+        bono_porcentaje = 0
+    
+    return {
+        "factor_rival_activo": True,
+        "equipo_ganador": equipo_ganador,
+        "equipo_perdedor": equipo_perdedor,
+        "posicion_ganador": pos_ganador,
+        "posicion_perdedor": pos_perdedor,
+        "diferencia_posiciones": diferencia if pos_ganador < pos_perdedor else 0,
+        "bono_porcentaje": round(bono_porcentaje * 100, 1),
+        "formula": f"min(({pos_perdedor} - {pos_ganador}) × 5%, 50%)" if pos_ganador < pos_perdedor else "Sin bono (ganador está arriba en la tabla)"
+    }
+
+@router.get("/ligas/{liga_id}/factor-rival/tabla")
+async def obtener_tabla_con_factor_rival(liga_id: str):
+    """
+    Obtiene la tabla de posiciones con valores de mercado ajustados
+    por el Factor Rival acumulado.
+    """
+    tabla_col = get_collection("tabla_posiciones")
+    ligas_col = get_collection("ligas")
+    
+    liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    if not liga:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    # Obtener tabla ordenada
+    tabla_cursor = tabla_col.find({"liga_id": liga_id}).sort([
+        ("pts", -1),
+        ("dif", -1),
+        ("gf", -1)
+    ])
+    
+    tabla = await tabla_cursor.to_list(length=50)
+    
+    # Enriquecer con factor rival
+    tabla_enriquecida = []
+    for i, equipo in enumerate(tabla, 1):
+        equipo_data = {
+            "posicion": i,
+            "equipo": equipo.get("equipo"),
+            "pj": equipo.get("pj", 0),
+            "pg": equipo.get("pg", 0),
+            "pe": equipo.get("pe", 0),
+            "pp": equipo.get("pp", 0),
+            "gf": equipo.get("gf", 0),
+            "gc": equipo.get("gc", 0),
+            "dg": equipo.get("dif", 0),
+            "pts": equipo.get("pts", 0),
+            "factor_rival_activo": liga.get("factor_rival_habilitado", True)
+        }
+        tabla_enriquecida.append(equipo_data)
+    
+    return {
+        "liga": liga.get("nombre"),
+        "division": liga.get("division"),
+        "factor_rival_habilitado": liga.get("factor_rival_habilitado", True),
+        "tabla": tabla_enriquecida,
+        "nota": "El Factor Rival otorga bonificación de valor de mercado al ganar a equipos por encima en la tabla"
+    }
+

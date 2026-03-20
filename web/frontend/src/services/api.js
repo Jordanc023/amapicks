@@ -287,6 +287,45 @@ export const ligaService = {
         const response = await api.get(`/admin/ligas/${ligaId}/estado`);
         return response.data;
     },
+
+    // --- COPA (24 EQUIPOS) ---
+    inscribirEquipoCopa: async (ligaId, equipoId, ligaOrigenId = null) => {
+        const response = await api.post(`/admin/ligas/${ligaId}/copa/inscribir`, {
+            equipo_id: equipoId,
+            liga_origen_id: ligaOrigenId
+        });
+        return response.data;
+    },
+
+    getInscripcionesCopa: async (ligaId) => {
+        const response = await api.get(`/admin/ligas/${ligaId}/copa/inscripciones`);
+        return response.data;
+    },
+
+    sembrarEquiposCopa: async (ligaId) => {
+        const response = await api.post(`/admin/ligas/${ligaId}/copa/sembrar`);
+        return response.data;
+    },
+
+    generarBracketCopa: async (ligaId, fechaInicio, diasEntreRondas = 3, horaDefault = '20:00') => {
+        const response = await api.post(`/admin/ligas/${ligaId}/copa/generar-bracket`, {
+            fecha_inicio: fechaInicio,
+            dias_entre_rondas: diasEntreRondas,
+            hora_default: horaDefault
+        });
+        return response.data;
+    },
+
+    // --- FACTOR RIVAL ---
+    calcularFactorRival: async (ligaId, equipoGanador, equipoPerdedor) => {
+        const response = await api.get(`/admin/ligas/${ligaId}/factor-rival/calcular?equipo_ganador=${equipoGanador}&equipo_perdedor=${equipoPerdedor}`);
+        return response.data;
+    },
+
+    getTablaFactorRival: async (ligaId) => {
+        const response = await api.get(`/admin/ligas/${ligaId}/factor-rival/tabla`);
+        return response.data;
+    },
 };
 
 export default api;
