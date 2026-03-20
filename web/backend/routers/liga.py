@@ -192,6 +192,167 @@ async def get_ligas_disponibles():
         for l in ligas
     ]
 
+@router.get("/jornadas/{liga_id}")
+async def get_jornadas(liga_id: str, jornada: int = None):
+    """
+    Obtiene los partidos organizados por jornada para una liga.
+    Si se especifica jornada, devuelve solo esa jornada.
+    """
+    partidos_col = get_collection("partidos")
+    ligas_col = get_collection("ligas")
+    
+    # Verificar liga existe
+    liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    if not liga:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    # Query base
+    query = {"liga_id": liga_id}
+    if jornada:
+        query["jornada"] = jornada
+    
+    # Obtener partidos ordenados por jornada y fecha
+    partidos_cursor = partidos_col.find(query).sort([("jornada", 1), ("fecha_hora", 1)])
+    partidos = await partidos_cursor.to_list(length=500)
+    
+    # Organizar por jornada
+    jornadas_dict = {}
+    for p in partidos:
+        jornada_num = p.get("jornada", 0)
+        if jornada_num not in jornadas_dict:
+            jornadas_dict[jornada_num] = {
+                "jornada": jornada_num,
+                "partidos": [],
+                "fecha": None,
+                "estado": "completada"  # default
+            }
+        
+        # Determinar estado del partido
+        estado = p.get("estado", "pendiente")
+        estado_display = {
+            "pendiente": "Pendiente",
+            "jugado": "Jugado",
+            "finalizado": "Finalizado",
+            "walkover": "Walkover",
+            "aplazado": "Aplazado"
+        }.get(estado, estado.capitalize())
+        
+        partido_data = {
+            "id": str(p.get("_id")),
+            "equipo_local": p.get("equipo_local"),
+            "equipo_visitante": p.get("equipo_visitante"),
+            "goles_local": p.get("goles_local"),
+            "goles_visitante": p.get("goles_visitante"),
+            "estado": estado,
+            "estado_display": estado_display,
+            "fecha_hora": p.get("fecha_hora"),
+            "jornada": jornada_num,
+            "es_copa": p.get("copa", False),
+            "ronda_copa": p.get("ronda") if p.get("copa") else None
+        }
+        
+        jornadas_dict[jornada_num]["partidos"].append(partido_data)
+        
+        # Actualizar estado de jornada si hay partidos pendientes
+        if estado == "pendiente":
+            jornadas_dict[jornada_num]["estado"] = "en_curso"
+        
+        # Usar fecha del primer partido como fecha de la jornada
+        if not jornadas_dict[jornada_num]["fecha"] and p.get("fecha_hora"):
+            try:
+                from datetime import datetime
+                fecha = datetime.fromisoformat(p.get("fecha_hora"))
+                jornadas_dict[jornada_num]["fecha"] = fecha.strftime("%d/%m/%Y")
+            except:
+                pass
+    
+    # Convertir a lista y ordenar
+    jornadas_list = list(jornadas_dict.values())
+    jornadas_list.sort(key=lambda x: x["jornada"])
+    
+    # Determinar jornada actual
+    jornada_actual = liga.get("jornada_actual", 1)
+    
+    return {
+        "liga": {
+            "id": liga_id,
+            "nombre": liga.get("nombre"),
+            "division": liga.get("division"),
+            "jornada_actual": jornada_actual,
+            "total_jornadas": liga.get("jornadas_ida", 11) + liga.get("jornadas_vuelta", 11)
+        },
+        "jornada_actual": jornada_actual,
+        "jornadas": jornadas_list,
+        "total_partidos": len(partidos)
+    }
+
+@router.get("/partidos-equipo/{equipo_nombre}")
+async def get_partidos_equipo(equipo_nombre: str, liga_id: str = None):
+    """
+    Obtiene todos los partidos (pasados y futuros) de un equipo específico.
+    Útil para que los usuarios vean el calendario de su equipo.
+    """
+    partidos_col = get_collection("partidos")
+    
+    # Query para buscar donde el equipo es local o visitante
+    query = {
+        "$or": [
+            {"equipo_local": equipo_nombre},
+            {"equipo_visitante": equipo_nombre}
+        ]
+    }
+    
+    if liga_id:
+        query["liga_id"] = liga_id
+    
+    partidos_cursor = partidos_col.find(query).sort([("jornada", 1), ("fecha_hora", 1)])
+    partidos = await partidos_cursor.to_list(length=100)
+    
+    partidos_formateados = []
+    for p in partidos:
+        es_local = p.get("equipo_local") == equipo_nombre
+        rival = p.get("equipo_visitante") if es_local else p.get("equipo_local")
+        
+        # Determinar resultado
+        estado = p.get("estado", "pendiente")
+        resultado = "pendiente"
+        goles_favor = None
+        goles_contra = None
+        
+        if estado in ["finalizado", "jugado", "walkover"]:
+            gl = p.get("goles_local", 0)
+            gv = p.get("goles_visitante", 0)
+            goles_favor = gl if es_local else gv
+            goles_contra = gv if es_local else gl
+            
+            if goles_favor > goles_contra:
+                resultado = "victoria"
+            elif goles_favor < goles_contra:
+                resultado = "derrota"
+            else:
+                resultado = "empate"
+        
+        partidos_formateados.append({
+            "id": str(p.get("_id")),
+            "jornada": p.get("jornada"),
+            "es_local": es_local,
+            "rival": rival,
+            "fecha_hora": p.get("fecha_hora"),
+            "estado": estado,
+            "goles_favor": goles_favor,
+            "goles_contra": goles_contra,
+            "resultado": resultado,
+            "es_copa": p.get("copa", False),
+            "ronda_copa": p.get("ronda") if p.get("copa") else None
+        })
+    
+    return {
+        "equipo": equipo_nombre,
+        "liga_id": liga_id,
+        "total_partidos": len(partidos_formateados),
+        "partidos": partidos_formateados
+    }
+
 @router.get("/stats/general")
 async def get_general_stats():
     """Obtiene estadísticas generales para el dashboard."""

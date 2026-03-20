@@ -58,6 +58,19 @@ export const ligaService = {
         return response.data;
     },
 
+    // --- JORNADAS Y PARTIDOS ---
+    getJornadas: async (ligaId, jornada = null) => {
+        const query = jornada ? `?jornada=${jornada}` : '';
+        const response = await api.get(`/jornadas/${ligaId}${query}`);
+        return response.data;
+    },
+
+    getPartidosEquipo: async (equipoNombre, ligaId = null) => {
+        const query = ligaId ? `?liga_id=${ligaId}` : '';
+        const response = await api.get(`/partidos-equipo/${encodeURIComponent(equipoNombre)}${query}`);
+        return response.data;
+    },
+
     getJugadores: async (filtro) => {
         const response = await api.get(`/mercado/jugadores?filtro=${filtro}`);
         return response.data;
