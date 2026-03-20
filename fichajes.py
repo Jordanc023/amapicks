@@ -19,6 +19,81 @@ from database import (
     tiene_oferta_pendiente, tiene_oferta_de_otro_dt
 )
 
+async def validateOffer(player_id: str, amount: int) -> dict:
+    """
+    Valida que una oferta esté dentro de los rangos permitidos.
+    
+    - Límite inferior: 75% del valor de mercado (cláusula)
+    - Límite superior: 200% del valor de mercado (cláusula)
+    
+    Retorna: {
+        'valid': bool,
+        'market_value': int,
+        'min_allowed': int,
+        'max_allowed': int,
+        'message': str (solo si no es válida)
+    }
+    """
+    jugadores_col = get_collection('jugadores')
+    
+    # Obtener valor de mercado (cláusula) del jugador
+    jugador = await jugadores_col.find_one({'discord_id': str(player_id)})
+    
+    if not jugador:
+        return {
+            'valid': False,
+            'market_value': 0,
+            'min_allowed': 0,
+            'max_allowed': 0,
+            'message': "❌ Jugador no encontrado en la base de datos."
+        }
+    
+    # Usar cláusula como market_value, o precio si no existe cláusula
+    market_value = jugador.get('clausula', jugador.get('precio', 0))
+    
+    if market_value <= 0:
+        return {
+            'valid': False,
+            'market_value': 0,
+            'min_allowed': 0,
+            'max_allowed': 0,
+            'message': "❌ El jugador no tiene un valor de mercado definido. Contacta a un administrador."
+        }
+    
+    # Calcular límites
+    min_allowed = int(market_value * 0.75)  # 75% mínimo
+    max_allowed = int(market_value * 2.00)  # 200% máximo
+    
+    # Validar límite inferior
+    if amount < min_allowed:
+        return {
+            'valid': False,
+            'market_value': market_value,
+            'min_allowed': min_allowed,
+            'max_allowed': max_allowed,
+            'message': f"❌ **Oferta rechazada.** El mínimo permitido es `${min_allowed:,}` (75% del valor de mercado)."
+        }
+    
+    # Validar límite superior
+    if amount > max_allowed:
+        return {
+            'valid': False,
+            'market_value': market_value,
+            'min_allowed': min_allowed,
+            'max_allowed': max_allowed,
+            'message': f"❌ **Monto inválido.** El máximo permitido es `${max_allowed:,}` (200% del valor de mercado)."
+        }
+    
+    # Oferta válida
+    return {
+        'valid': True,
+        'market_value': market_value,
+        'min_allowed': min_allowed,
+        'max_allowed': max_allowed,
+        'message': None
+    }
+
+
 class ConfirmacionTraspasoView(View):
     """Vista interactiva enviada por DM a un DT para que acepte o rechace la venta de su jugador."""
 
@@ -922,6 +997,29 @@ class FichajesCog(commands.Cog):
         
         if eq_vendedor == eq_comprador:
             return await ctx.send("❌ No puedes ofertar por un jugador de tu propio equipo. Usa sentido común.")
+
+        # VALIDACIÓN DE RANGO DE PRECIO (75% - 200% del valor de mercado)
+        validacion = await validateOffer(str(jugador.id), monto)
+        if not validacion['valid']:
+            # Enviar mensaje con información detallada del rango permitido
+            embed_error = discord.Embed(
+                title="⚠️ Validación de Oferta Fallida",
+                description=validacion['message'],
+                color=discord.Color.orange()
+            )
+            embed_error.add_field(
+                name="📊 Información del Jugador",
+                value=f"**Valor de mercado:** `${validacion['market_value']:,}`\n"
+                      f"**Mínimo permitido (75%):** `${validacion['min_allowed']:,}`\n"
+                      f"**Máximo permitido (200%):** `${validacion['max_allowed']:,}`",
+                inline=False
+            )
+            embed_error.add_field(
+                name="💰 Tu oferta",
+                value=f"`${monto:,}`",
+                inline=True
+            )
+            return await ctx.send(embed=embed_error, ephemeral=True)
 
         # 3. Revisar presupuesto del comprador
         equipos_col = get_collection('equipos')
