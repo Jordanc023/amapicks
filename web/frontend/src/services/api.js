@@ -218,10 +218,75 @@ export const ligaService = {
         return response.data;
     },
 
-    purgeLogs: async () => {
-        const response = await api.post('/admin/system/purge-logs');
+// --- LIGAS MANAGER (Múltiples Ligas D1, D2, etc.) ---
+
+    getLigas: async (activasOnly = false) => {
+        const response = await api.get(`/admin/ligas${activasOnly ? '?activas_only=true' : ''}`);
         return response.data;
-    }
+    },
+
+    getLigaById: async (ligaId) => {
+        const response = await api.get(`/admin/ligas/${ligaId}`);
+        return response.data;
+    },
+
+    crearLiga: async (ligaData) => {
+        const response = await api.post('/admin/ligas', ligaData);
+        return response.data;
+    },
+
+    actualizarLiga: async (ligaId, updateData) => {
+        const response = await api.patch(`/admin/ligas/${ligaId}`, updateData);
+        return response.data;
+    },
+
+    eliminarLiga: async (ligaId) => {
+        const response = await api.delete(`/admin/ligas/${ligaId}`);
+        return response.data;
+    },
+
+    getLigaActiva: async () => {
+        const response = await api.get('/admin/liga-activa');
+        return response.data;
+    },
+
+    establecerLigaActiva: async (ligaId) => {
+        const response = await api.post('/admin/liga-activa', { liga_id: ligaId });
+        return response.data;
+    },
+
+    getEquiposLiga: async (ligaId) => {
+        const response = await api.get(`/admin/ligas/${ligaId}/equipos`);
+        return response.data;
+    },
+
+    agregarEquipoALiga: async (ligaId, equipoId) => {
+        const response = await api.post(`/admin/ligas/${ligaId}/equipos`, {
+            equipo_id: equipoId,
+            liga_id: ligaId
+        });
+        return response.data;
+    },
+
+    removerEquipoDeLiga: async (ligaId, equipoId) => {
+        const response = await api.delete(`/admin/ligas/${ligaId}/equipos/${equipoId}`);
+        return response.data;
+    },
+
+    generarFixtureLiga: async (ligaId, fechaInicio, diasEntreJornadas = 3, horaDefault = '20:00') => {
+        const response = await api.post(`/admin/ligas/${ligaId}/generar-fixture?fecha_inicio=${fechaInicio}&dias_entre_jornadas=${diasEntreJornadas}&hora_default=${horaDefault}`);
+        return response.data;
+    },
+
+    avanzarJornadaLiga: async (ligaId) => {
+        const response = await api.post(`/admin/ligas/${ligaId}/avanzar-jornada`);
+        return response.data;
+    },
+
+    getEstadoDetalladoLiga: async (ligaId) => {
+        const response = await api.get(`/admin/ligas/${ligaId}/estado`);
+        return response.data;
+    },
 };
 
 export default api;

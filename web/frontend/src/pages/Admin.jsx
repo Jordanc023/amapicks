@@ -9,6 +9,7 @@ import JugadoresTab from '../components/admin/JugadoresTab';
 import AuditoriaTab from '../components/admin/AuditoriaTab';
 import LigaTab from '../components/admin/LigaTab';
 import SistemaTab from '../components/admin/SistemaTab';
+import LigasManagerTab from '../components/admin/LigasManagerTab';
 
 // External Modals
 import EditStatsModal from '../components/admin/EditStatsModal';
@@ -133,6 +134,7 @@ const Admin = () => {
 
     // ─── Tab definitions ─────────────────────────────────────────────
     const tabs = [
+        { key: 'ligas', label: 'Ligas', icon: Trophy },
         { key: 'equipos', label: 'Equipos', icon: Shield, count: equipos.length },
         { key: 'jugadores', label: 'Jugadores', icon: Users, count: jugadores.length },
         { key: 'auditoria', label: 'Auditoría', icon: FileText },
@@ -185,6 +187,10 @@ const Admin = () => {
 
             {/* ═══ Tab Content ═══ */}
             <div className="max-w-7xl mx-auto px-8">
+                {activeTab === 'ligas' && (
+                    <LigasManagerTab />
+                )}
+
                 {activeTab === 'equipos' && (
                     <EquiposTab
                         equipos={equipos}

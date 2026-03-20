@@ -1,0 +1,759 @@
+from fastapi import APIRouter, HTTPException, Depends
+from database import get_collection
+from typing import List, Optional
+from pydantic import BaseModel
+from datetime import datetime
+from bson import ObjectId
+
+router = APIRouter()
+
+# ============================================================
+# MODELOS
+# ============================================================
+
+class LigaBase(BaseModel):
+    nombre: str
+    descripcion: Optional[str] = ""
+    division: str  # "D1", "D2", etc.
+    max_equipos: int = 12
+    formato: str = "todos_contra_todos"  # round_robin, eliminatoria, etc.
+    jornadas_ida: int = 11  # (max_equipos - 1)
+    jornadas_vuelta: int = 11  # igual a ida para round robin
+    puntos_victoria: int = 3
+    puntos_empate: int = 1
+    puntos_derrota: int = 0
+    playoffs_habilitados: bool = True
+    clasificados_playoffs: int = 4
+    jornada_paron_copa: int = 11  # Jornada donde se detiene la liga para copa
+    activa: bool = True
+    color_identificacion: str = "#FFD700"  # Color para UI
+
+class LigaCreate(LigaBase):
+    pass
+
+class LigaUpdate(BaseModel):
+    nombre: Optional[str] = None
+    descripcion: Optional[str] = None
+    max_equipos: Optional[int] = None
+    formato: Optional[str] = None
+    jornadas_ida: Optional[int] = None
+    jornadas_vuelta: Optional[int] = None
+    puntos_victoria: Optional[int] = None
+    puntos_empate: Optional[int] = None
+    puntos_derrota: Optional[int] = None
+    playoffs_habilitados: Optional[bool] = None
+    clasificados_playoffs: Optional[int] = None
+    jornada_paron_copa: Optional[int] = None
+    activa: Optional[bool] = None
+    color_identificacion: Optional[str] = None
+
+class LigaResponse(LigaBase):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+    total_equipos: int = 0
+    jornada_actual: int = 1
+    estado: str = "configuracion"  # configuracion, en_curso, paron_copa, finalizada
+
+class AsignarEquipoLiga(BaseModel):
+    equipo_id: str  # puede ser nombre o _id
+    liga_id: str
+
+class CambiarLigaActiva(BaseModel):
+    liga_id: str
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def serialize_liga(liga_doc) -> dict:
+    """Convierte un documento de liga a formato serializable."""
+    return {
+        "id": str(liga_doc.get("_id")),
+        "nombre": liga_doc.get("nombre"),
+        "descripcion": liga_doc.get("descripcion", ""),
+        "division": liga_doc.get("division", "D1"),
+        "max_equipos": liga_doc.get("max_equipos", 12),
+        "formato": liga_doc.get("formato", "todos_contra_todos"),
+        "jornadas_ida": liga_doc.get("jornadas_ida", 11),
+        "jornadas_vuelta": liga_doc.get("jornadas_vuelta", 11),
+        "puntos_victoria": liga_doc.get("puntos_victoria", 3),
+        "puntos_empate": liga_doc.get("puntos_empate", 1),
+        "puntos_derrota": liga_doc.get("puntos_derrota", 0),
+        "playoffs_habilitados": liga_doc.get("playoffs_habilitados", True),
+        "clasificados_playoffs": liga_doc.get("clasificados_playoffs", 4),
+        "jornada_paron_copa": liga_doc.get("jornada_paron_copa", 11),
+        "activa": liga_doc.get("activa", True),
+        "color_identificacion": liga_doc.get("color_identificacion", "#FFD700"),
+        "created_at": liga_doc.get("created_at", datetime.utcnow()),
+        "updated_at": liga_doc.get("updated_at", datetime.utcnow()),
+        "total_equipos": liga_doc.get("total_equipos", 0),
+        "jornada_actual": liga_doc.get("jornada_actual", 1),
+        "estado": liga_doc.get("estado", "configuracion")
+    }
+
+# ============================================================
+# ENDPOINTS CRUD LIGAS
+# ============================================================
+
+@router.post("/ligas", response_model=LigaResponse)
+async def crear_liga(liga: LigaCreate):
+    """
+    Crea una nueva liga (D1, D2, etc.) con configuración personalizada.
+    """
+    ligas_col = get_collection("ligas")
+    
+    # Verificar si ya existe una liga con el mismo nombre/division
+    existente = await ligas_col.find_one({
+        "$or": [
+            {"nombre": liga.nombre},
+            {"division": liga.division}
+        ]
+    })
+    
+    if existente:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Ya existe una liga con nombre '{liga.nombre}' o división '{liga.division}'"
+        )
+    
+    # Calcular jornadas automáticamente si es round robin
+    if liga.formato == "todos_contra_todos":
+        liga.jornadas_ida = liga.max_equipos - 1
+        liga.jornadas_vuelta = liga.max_equipos - 1
+    
+    liga_doc = {
+        **liga.dict(),
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
+        "total_equipos": 0,
+        "jornada_actual": 1,
+        "estado": "configuracion"
+    }
+    
+    result = await ligas_col.insert_one(liga_doc)
+    
+    # Crear configuración inicial de temporada para esta liga
+    config_liga_col = get_collection("config_liga")
+    await config_liga_col.update_one(
+        {"liga_id": str(result.inserted_id)},
+        {"$set": {
+            "liga_id": str(result.inserted_id),
+            "nombre_liga": liga.nombre,
+            "division": liga.division,
+            "temporada": datetime.now().year,
+            "mercado_abierto": False,
+            "inscripcion_copa_abierta": False,
+            "created_at": datetime.utcnow()
+        }},
+        upsert=True
+    )
+    
+    return {
+        **liga_doc,
+        "id": str(result.inserted_id)
+    }
+
+@router.get("/ligas", response_model=List[LigaResponse])
+async def listar_ligas(activas_only: bool = False):
+    """
+    Lista todas las ligas disponibles.
+    Si activas_only=True, solo devuelve ligas activas.
+    """
+    ligas_col = get_collection("ligas")
+    
+    query = {"activa": True} if activas_only else {}
+    
+    ligas_cursor = ligas_col.find(query).sort("created_at", -1)
+    ligas = await ligas_cursor.to_list(length=100)
+    
+    return [serialize_liga(l) for l in ligas]
+
+@router.get("/ligas/{liga_id}", response_model=LigaResponse)
+async def obtener_liga(liga_id: str):
+    """
+    Obtiene detalles de una liga específica.
+    """
+    ligas_col = get_collection("ligas")
+    
+    try:
+        liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    except:
+        # Si no es un ObjectId válido, buscar por otros campos
+        liga = await ligas_col.find_one({"division": liga_id})
+    
+    if not liga:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    return serialize_liga(liga)
+
+@router.patch("/ligas/{liga_id}", response_model=LigaResponse)
+async def actualizar_liga(liga_id: str, update: LigaUpdate):
+    """
+    Actualiza configuración de una liga.
+    """
+    ligas_col = get_collection("ligas")
+    
+    # Construir update dict solo con campos proporcionados
+    update_data = {k: v for k, v in update.dict().items() if v is not None}
+    
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No se proporcionaron campos para actualizar")
+    
+    # Recalcular jornadas si cambió max_equipos
+    if "max_equipos" in update_data and update_data.get("formato", "") == "todos_contra_todos":
+        max_eq = update_data["max_equipos"]
+        update_data["jornadas_ida"] = max_eq - 1
+        update_data["jornadas_vuelta"] = max_eq - 1
+    
+    update_data["updated_at"] = datetime.utcnow()
+    
+    result = await ligas_col.update_one(
+        {"_id": ObjectId(liga_id)},
+        {"$set": update_data}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    # Retornar liga actualizada
+    liga_actualizada = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    return serialize_liga(liga_actualizada)
+
+@router.delete("/ligas/{liga_id}")
+async def eliminar_liga(liga_id: str):
+    """
+    Elimina una liga y todos sus datos asociados (⚠️ Peligroso).
+    """
+    ligas_col = get_collection("ligas")
+    partidos_col = get_collection("partidos")
+    tabla_col = get_collection("tabla_posiciones")
+    config_liga_col = get_collection("config_liga")
+    
+    # Verificar que existe
+    liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    if not liga:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    # Eliminar datos asociados
+    await partidos_col.delete_many({"liga_id": liga_id})
+    await tabla_col.delete_many({"liga_id": liga_id})
+    await config_liga_col.delete_one({"liga_id": liga_id})
+    
+    # Desasignar equipos de esta liga
+    equipos_col = get_collection("equipos")
+    await equipos_col.update_many(
+        {"liga_id": liga_id},
+        {"$unset": {"liga_id": "", "liga_nombre": ""}}
+    )
+    
+    # Eliminar la liga
+    await ligas_col.delete_one({"_id": ObjectId(liga_id)})
+    
+    return {
+        "message": f"Liga '{liga.get('nombre')}' eliminada exitosamente",
+        "liga_id": liga_id,
+        "eliminados": {
+            "partidos": True,
+            "tabla": True,
+            "config": True
+        }
+    }
+
+# ============================================================
+# GESTIÓN DE EQUIPOS EN LIGAS
+# ============================================================
+
+@router.post("/ligas/{liga_id}/equipos")
+async def agregar_equipo_a_liga(liga_id: str, equipo_data: AsignarEquipoLiga):
+    """
+    Asigna un equipo a una liga específica.
+    """
+    ligas_col = get_collection("ligas")
+    equipos_col = get_collection("equipos")
+    
+    # Verificar liga
+    liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    if not liga:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    # Verificar capacidad
+    equipos_actuales = await equipos_col.count_documents({"liga_id": liga_id})
+    if equipos_actuales >= liga.get("max_equipos", 12):
+        raise HTTPException(
+            status_code=400, 
+            detail=f"La liga ya tiene el máximo de {liga.get('max_equipos')} equipos"
+        )
+    
+    # Buscar equipo (por nombre o _id)
+    equipo = await equipos_col.find_one({
+        "$or": [
+            {"_id": ObjectId(equipo_data.equipo_id) if len(equipo_data.equipo_id) == 24 else {"$ne": None}},
+            {"nombre": equipo_data.equipo_id},
+            {"role_name": equipo_data.equipo_id}
+        ]
+    })
+    
+    if not equipo:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    
+    # Verificar si ya está en otra liga
+    if equipo.get("liga_id") and equipo.get("liga_id") != liga_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El equipo '{equipo.get('nombre')}' ya está asignado a otra liga"
+        )
+    
+    # Asignar a liga
+    await equipos_col.update_one(
+        {"_id": equipo.get("_id")},
+        {"$set": {
+            "liga_id": liga_id,
+            "liga_nombre": liga.get("nombre"),
+            "liga_division": liga.get("division")
+        }}
+    )
+    
+    # Actualizar contador en liga
+    await ligas_col.update_one(
+        {"_id": ObjectId(liga_id)},
+        {"$set": {"total_equipos": equipos_actuales + 1, "updated_at": datetime.utcnow()}}
+    )
+    
+    return {
+        "message": f"Equipo '{equipo.get('nombre')}' asignado a '{liga.get('nombre')}'",
+        "equipo": equipo.get("nombre"),
+        "liga": liga.get("nombre"),
+        "total_equipos_liga": equipos_actuales + 1
+    }
+
+@router.delete("/ligas/{liga_id}/equipos/{equipo_id}")
+async def remover_equipo_de_liga(liga_id: str, equipo_id: str):
+    """
+    Remueve un equipo de una liga.
+    """
+    ligas_col = get_collection("ligas")
+    equipos_col = get_collection("equipos")
+    
+    # Buscar equipo
+    equipo = await equipos_col.find_one({
+        "$or": [
+            {"_id": ObjectId(equipo_id) if len(equipo_id) == 24 else {"$ne": None}},
+            {"nombre": equipo_id},
+            {"role_name": equipo_id}
+        ]
+    })
+    
+    if not equipo:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    
+    if equipo.get("liga_id") != liga_id:
+        raise HTTPException(status_code=400, detail="El equipo no está en esta liga")
+    
+    # Remover de liga
+    await equipos_col.update_one(
+        {"_id": equipo.get("_id")},
+        {"$unset": {"liga_id": "", "liga_nombre": "", "liga_division": ""}}
+    )
+    
+    # Actualizar contador
+    equipos_actuales = await equipos_col.count_documents({"liga_id": liga_id})
+    await ligas_col.update_one(
+        {"_id": ObjectId(liga_id)},
+        {"$set": {"total_equipos": max(0, equipos_actuales), "updated_at": datetime.utcnow()}}
+    )
+    
+    return {
+        "message": f"Equipo '{equipo.get('nombre')}' removido de la liga",
+        "liga_id": liga_id
+    }
+
+@router.get("/ligas/{liga_id}/equipos")
+async def listar_equipos_liga(liga_id: str):
+    """
+    Lista todos los equipos asignados a una liga.
+    """
+    equipos_col = get_collection("equipos")
+    
+    equipos_cursor = equipos_col.find({"liga_id": liga_id})
+    equipos = await equipos_cursor.to_list(length=100)
+    
+    return [
+        {
+            "id": str(eq.get("_id")),
+            "nombre": eq.get("nombre"),
+            "role_name": eq.get("role_name"),
+            "logo_url": eq.get("logo_url"),
+            "dt_nombre": eq.get("dt_nombre"),
+            "presupuesto": eq.get("presupuesto", 0)
+        }
+        for eq in equipos
+    ]
+
+# ============================================================
+# LIGA ACTIVA (GLOBAL)
+# ============================================================
+
+@router.get("/liga-activa")
+async def obtener_liga_activa():
+    """
+    Obtiene la liga actualmente activa para el sistema.
+    """
+    config_global = get_collection("server_config")
+    ligas_col = get_collection("ligas")
+    
+    config = await config_global.find_one({"_id": "config_global"})
+    liga_activa_id = config.get("liga_activa_id") if config else None
+    
+    if liga_activa_id:
+        liga = await ligas_col.find_one({"_id": ObjectId(liga_activa_id)})
+        if liga:
+            return {
+                "liga_activa": serialize_liga(liga),
+                "configurada": True
+            }
+    
+    # Si no hay liga activa configurada, devolver la primera activa
+    liga = await ligas_col.find_one({"activa": True})
+    if liga:
+        return {
+            "liga_activa": serialize_liga(liga),
+            "configurada": False,
+            "message": "No hay liga activa configurada. Usando primera liga disponible."
+        }
+    
+    return {
+        "liga_activa": None,
+        "configurada": False,
+        "message": "No hay ligas disponibles"
+    }
+
+@router.post("/liga-activa")
+async def establecer_liga_activa(data: CambiarLigaActiva):
+    """
+    Establece la liga activa para todo el sistema.
+    """
+    ligas_col = get_collection("ligas")
+    config_global = get_collection("server_config")
+    
+    # Verificar que la liga existe
+    liga = await ligas_col.find_one({"_id": ObjectId(data.liga_id)})
+    if not liga:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    # Desactivar todas las demás ligas como "activas en sistema"
+    await ligas_col.update_many(
+        {"_id": {"$ne": ObjectId(data.liga_id)}},
+        {"$set": {"es_liga_activa_sistema": False}}
+    )
+    
+    # Marcar esta como la activa
+    await ligas_col.update_one(
+        {"_id": ObjectId(data.liga_id)},
+        {"$set": {"es_liga_activa_sistema": True, "updated_at": datetime.utcnow()}}
+    )
+    
+    # Guardar en config global
+    await config_global.update_one(
+        {"_id": "config_global"},
+        {"$set": {
+            "liga_activa_id": data.liga_id,
+            "liga_activa_nombre": liga.get("nombre"),
+            "liga_activa_division": liga.get("division"),
+            "updated_at": datetime.utcnow()
+        }},
+        upsert=True
+    )
+    
+    return {
+        "message": f"Liga activa cambiada a '{liga.get('nombre')}'",
+        "liga_activa": serialize_liga(liga)
+    }
+
+# ============================================================
+# FIXTURE GENERATION PARA LIGAS
+# ============================================================
+
+def _generar_fixture_round_robin_liga(equipos: List[str], liga_id: str):
+    """
+    Genera fixture round-robin (ida y vuelta) para una liga específica.
+    Retorna lista de jornadas con partidos.
+    """
+    n = len(equipos)
+    if n % 2 == 1:
+        equipos = equipos + ["BYE"]
+        n = len(equipos)
+    
+    fixture_ida = []
+    equipos_rotacion = equipos.copy()
+    
+    # Jornadas de IDA
+    for jornada_num in range(n - 1):
+        partidos_jornada = []
+        for i in range(n // 2):
+            local = equipos_rotacion[i]
+            visitante = equipos_rotacion[n - 1 - i]
+            
+            if local != "BYE" and visitante != "BYE":
+                partidos_jornada.append({
+                    "equipo_local": local,
+                    "equipo_visitante": visitante,
+                    "liga_id": liga_id,
+                    "jornada": jornada_num + 1,
+                    "fase": "ida"
+                })
+        
+        # Rotación circular
+        equipos_rotacion = [equipos_rotacion[0]] + equipos_rotacion[-1:] + equipos_rotacion[1:-1]
+        fixture_ida.append({
+            "jornada": jornada_num + 1,
+            "fase": "ida",
+            "partidos": partidos_jornada
+        })
+    
+    # Jornadas de VUELTA (invertir localías)
+    fixture_vuelta = []
+    for jornada_data in fixture_ida:
+        partidos_vuelta = []
+        for p in jornada_data["partidos"]:
+            partidos_vuelta.append({
+                "equipo_local": p["equipo_visitante"],
+                "equipo_visitante": p["equipo_local"],
+                "liga_id": liga_id,
+                "jornada": jornada_data["jornada"] + len(fixture_ida),
+                "fase": "vuelta"
+            })
+        
+        fixture_vuelta.append({
+            "jornada": jornada_data["jornada"] + len(fixture_ida),
+            "fase": "vuelta",
+            "partidos": partidos_vuelta
+        })
+    
+    return fixture_ida + fixture_vuelta
+
+@router.post("/ligas/{liga_id}/generar-fixture")
+async def generar_fixture_liga(
+    liga_id: str, 
+    fecha_inicio: str,
+    dias_entre_jornadas: int = 3,
+    hora_default: str = "20:00"
+):
+    """
+    Genera el fixture completo (ida y vuelta) para una liga.
+    """
+    ligas_col = get_collection("ligas")
+    equipos_col = get_collection("equipos")
+    partidos_col = get_collection("partidos")
+    
+    # Verificar liga
+    liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    if not liga:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    # Obtener equipos de la liga
+    equipos_cursor = equipos_col.find({"liga_id": liga_id})
+    equipos_docs = await equipos_cursor.to_list(length=50)
+    
+    if len(equipos_docs) < 2:
+        raise HTTPException(
+            status_code=400, 
+            detail="Se necesitan al menos 2 equipos en la liga para generar fixture"
+        )
+    
+    equipos_nombres = [eq["nombre"] for eq in equipos_docs]
+    
+    # Generar fixture
+    fixture = _generar_fixture_round_robin_liga(equipos_nombres, liga_id)
+    
+    # Parse fecha inicio
+    try:
+        from datetime import datetime as dt
+        fecha_base = dt.strptime(fecha_inicio, "%Y-%m-%d")
+    except:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+    
+    # Crear partidos en BD
+    partidos_creados = 0
+    for jornada_data in fixture:
+        jornada_num = jornada_data["jornada"]
+        fecha_jornada = fecha_base + __import__('datetime').timedelta(days=(jornada_num - 1) * dias_entre_jornadas)
+        
+        for partido in jornada_data["partidos"]:
+            fecha_hora = datetime.combine(
+                fecha_jornada.date(), 
+                datetime.strptime(hora_default, "%H:%M").time()
+            )
+            
+            await partidos_col.insert_one({
+                "guild_id": "0",
+                "liga_id": liga_id,
+                "liga_nombre": liga.get("nombre"),
+                "equipo_local": partido["equipo_local"],
+                "equipo_visitante": partido["equipo_visitante"],
+                "fecha_hora": fecha_hora.isoformat(),
+                "jornada": jornada_num,
+                "fase": "Liga Regular",
+                "sub_fase": partido.get("fase", "ida"),
+                "estado": "pendiente",
+                "auto_generado": True,
+                "creado_en": datetime.utcnow()
+            })
+            partidos_creados += 1
+    
+    # Actualizar estado de la liga
+    total_jornadas = len(fixture)
+    await ligas_col.update_one(
+        {"_id": ObjectId(liga_id)},
+        {"$set": {
+            "estado": "en_curso",
+            "jornada_actual": 1,
+            "total_jornadas": total_jornadas,
+            "jornadas_ida": total_jornadas // 2,
+            "jornadas_vuelta": total_jornadas // 2,
+            "updated_at": datetime.utcnow(),
+            "fixture_generado_en": datetime.utcnow(),
+            "fecha_inicio": fecha_inicio,
+            "partidos_generados": partidos_creados
+        }}
+    )
+    
+    return {
+        "message": f"Fixture generado exitosamente para '{liga.get('nombre')}'",
+        "liga_id": liga_id,
+        "equipos": len(equipos_nombres),
+        "jornadas_total": total_jornadas,
+        "jornadas_ida": total_jornadas // 2,
+        "jornadas_vuelta": total_jornadas // 2,
+        "partidos_creados": partidos_creados,
+        "fixture_preview": fixture[:2]  # Primeras 2 jornadas como preview
+    }
+
+@router.post("/ligas/{liga_id}/avanzar-jornada")
+async def avanzar_jornada_liga(liga_id: str):
+    """
+    Avanza a la siguiente jornada de la liga.
+    Verifica si se debe activar el parón de copa.
+    """
+    ligas_col = get_collection("ligas")
+    partidos_col = get_collection("partidos")
+    config_liga_col = get_collection("config_liga")
+    
+    liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    if not liga:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    jornada_actual = liga.get("jornada_actual", 1)
+    jornada_paron = liga.get("jornada_paron_copa", 11)
+    
+    # Verificar si todos los partidos de la jornada actual están finalizados
+    partidos_pendientes = await partidos_col.count_documents({
+        "liga_id": liga_id,
+        "jornada": jornada_actual,
+        "estado": {"$nin": ["finalizado", "walkover"]}
+    })
+    
+    if partidos_pendientes > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No se puede avanzar. Hay {partidos_pendientes} partidos pendientes en la jornada {jornada_actual}"
+        )
+    
+    nueva_jornada = jornada_actual + 1
+    
+    # Verificar si es el parón de copa
+    es_paron_copa = nueva_jornada > jornada_paron and jornada_actual <= jornada_paron
+    
+    update_data = {
+        "jornada_actual": nueva_jornada,
+        "updated_at": datetime.utcnow()
+    }
+    
+    if es_paron_copa:
+        update_data["estado"] = "paron_copa"
+        # Abrir mercado e inscripción a copa
+        await config_liga_col.update_one(
+            {"liga_id": liga_id},
+            {"$set": {
+                "mercado_abierto": True,
+                "inscripcion_copa_abierta": True,
+                "updated_at": datetime.utcnow()
+            }}
+        )
+    
+    await ligas_col.update_one(
+        {"_id": ObjectId(liga_id)},
+        {"$set": update_data}
+    )
+    
+    return {
+        "message": f"Jornada avanzada a {nueva_jornada}",
+        "jornada_anterior": jornada_actual,
+        "jornada_actual": nueva_jornada,
+        "paron_copa_activado": es_paron_copa,
+        "mercado_abierto": es_paron_copa,
+        "inscripcion_copa_abierta": es_paron_copa
+    }
+
+@router.get("/ligas/{liga_id}/estado")
+async def obtener_estado_liga_detallado(liga_id: str):
+    """
+    Obtiene el estado detallado de una liga incluyendo progreso.
+    """
+    ligas_col = get_collection("ligas")
+    partidos_col = get_collection("partidos")
+    equipos_col = get_collection("equipos")
+    
+    liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    if not liga:
+        raise HTTPException(status_code=404, detail="Liga no encontrada")
+    
+    # Conteos
+    total_equipos = await equipos_col.count_documents({"liga_id": liga_id})
+    total_partidos = await partidos_col.count_documents({"liga_id": liga_id})
+    partidos_jugados = await partidos_col.count_documents({
+        "liga_id": liga_id,
+        "estado": {"$in": ["finalizado", "walkover"]}
+    })
+    
+    # Partidos por jornada actual
+    partidos_jornada_actual = await partidos_col.count_documents({
+        "liga_id": liga_id,
+        "jornada": liga.get("jornada_actual", 1)
+    })
+    
+    partidos_jugados_jornada_actual = await partidos_col.count_documents({
+        "liga_id": liga_id,
+        "jornada": liga.get("jornada_actual", 1),
+        "estado": {"$in": ["finalizado", "walkover"]}
+    })
+    
+    total_jornadas = liga.get("jornadas_ida", 0) + liga.get("jornadas_vuelta", 0)
+    progreso = round((liga.get("jornada_actual", 1) / total_jornadas) * 100, 1) if total_jornadas > 0 else 0
+    
+    return {
+        "liga": serialize_liga(liga),
+        "equipos": {
+            "total": total_equipos,
+            "max_permitido": liga.get("max_equipos", 12),
+            "cupos_disponibles": max(0, liga.get("max_equipos", 12) - total_equipos)
+        },
+        "partidos": {
+            "total": total_partidos,
+            "jugados": partidos_jugados,
+            "pendientes": total_partidos - partidos_jugados
+        },
+        "jornada": {
+            "actual": liga.get("jornada_actual", 1),
+            "total": total_jornadas,
+            "progreso_porcentaje": progreso,
+            "partidos_en_jornada": partidos_jornada_actual,
+            "partidos_jugados_jornada": partidos_jugados_jornada_actual,
+            "partidos_pendientes_jornada": partidos_jornada_actual - partidos_jugados_jornada_actual
+        },
+        "paron_copa": {
+            "jornada_paron": liga.get("jornada_paron_copa", 11),
+            "activo": liga.get("estado") == "paron_copa",
+            "proximo": liga.get("jornada_actual", 1) == liga.get("jornada_paron_copa", 11)
+        }
+    }

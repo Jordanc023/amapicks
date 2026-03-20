@@ -25,13 +25,14 @@ client = AsyncIOMotorClient(MONGO_URI)
 db = client[os.getenv("DB_NAME", "liga_bot")]
 
 # Importar Routers
-from routers import liga, auth, admin, estadisticas, partidos
+from routers import liga, auth, admin, estadisticas, partidos, ligas_manager
 
 app.include_router(liga.router, prefix="/api", tags=["liga"])
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(estadisticas.router, prefix="/api", tags=["estadisticas"])
 app.include_router(partidos.router, prefix="/api", tags=["partidos"])
+app.include_router(ligas_manager.router, prefix="/api/admin", tags=["ligas"])
 
 
 @app.get("/")
