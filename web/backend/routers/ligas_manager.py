@@ -280,9 +280,11 @@ async def eliminar_liga(liga_id: str):
 async def agregar_equipo_a_liga(liga_id: str, equipo_data: AsignarEquipoLiga):
     """
     Asigna un equipo a una liga específica.
+    Si al agregar el equipo la liga queda completa, genera el fixture automáticamente.
     """
     ligas_col = get_collection("ligas")
     equipos_col = get_collection("equipos")
+    partidos_col = get_collection("partidos")
     
     # Verificar liga
     liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
@@ -291,20 +293,32 @@ async def agregar_equipo_a_liga(liga_id: str, equipo_data: AsignarEquipoLiga):
     
     # Verificar capacidad
     equipos_actuales = await equipos_col.count_documents({"liga_id": liga_id})
-    if equipos_actuales >= liga.get("max_equipos", 12):
+    max_equipos = liga.get("max_equipos", 12)
+    
+    if equipos_actuales >= max_equipos:
         raise HTTPException(
             status_code=400, 
-            detail=f"La liga ya tiene el máximo de {liga.get('max_equipos')} equipos"
+            detail=f"La liga ya tiene el máximo de {max_equipos} equipos"
         )
     
     # Buscar equipo (por nombre o _id)
-    equipo = await equipos_col.find_one({
-        "$or": [
-            {"_id": ObjectId(equipo_data.equipo_id) if len(equipo_data.equipo_id) == 24 else {"$ne": None}},
-            {"nombre": equipo_data.equipo_id},
-            {"role_name": equipo_data.equipo_id}
-        ]
-    })
+    equipo = None
+    
+    # Primero intentar buscar por _id si parece un ObjectId válido (24 chars hex)
+    if len(equipo_data.equipo_id) == 24:
+        try:
+            equipo = await equipos_col.find_one({"_id": ObjectId(equipo_data.equipo_id)})
+        except:
+            pass  # No es un ObjectId válido, continuar con búsqueda por nombre
+    
+    # Si no se encontró por _id, buscar por nombre o role_name
+    if not equipo:
+        equipo = await equipos_col.find_one({
+            "$or": [
+                {"nombre": equipo_data.equipo_id},
+                {"role_name": equipo_data.equipo_id}
+            ]
+        })
     
     if not equipo:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
@@ -326,17 +340,118 @@ async def agregar_equipo_a_liga(liga_id: str, equipo_data: AsignarEquipoLiga):
         }}
     )
     
+    # Calcular nuevo conteo
+    nuevo_conteo = equipos_actuales + 1
+    
     # Actualizar contador en liga
     await ligas_col.update_one(
         {"_id": ObjectId(liga_id)},
-        {"$set": {"total_equipos": equipos_actuales + 1, "updated_at": datetime.utcnow()}}
+        {"$set": {"total_equipos": nuevo_conteo, "updated_at": datetime.utcnow()}}
     )
     
-    return {
+    # Verificar si la liga está completa y generar fixture automáticamente
+    fixture_generado = None
+    if nuevo_conteo == max_equipos and liga.get("estado") == "configuracion":
+        # Liga completa - generar fixture automáticamente
+        try:
+            fixture_generado = await _generar_fixture_automatico(liga_id, ligas_col, equipos_col, partidos_col)
+        except Exception as e:
+            print(f"Error generando fixture automático: {e}")
+            fixture_generado = {"error": str(e)}
+    
+    respuesta = {
         "message": f"Equipo '{equipo.get('nombre')}' asignado a '{liga.get('nombre')}'",
         "equipo": equipo.get("nombre"),
         "liga": liga.get("nombre"),
-        "total_equipos_liga": equipos_actuales + 1
+        "total_equipos_liga": nuevo_conteo,
+        "liga_completa": nuevo_conteo == max_equipos
+    }
+    
+    if fixture_generado:
+        respuesta["fixture_generado"] = fixture_generado
+    
+    return respuesta
+
+
+async def _generar_fixture_automatico(liga_id: str, ligas_col, equipos_col, partidos_col):
+    """
+    Genera automáticamente el fixture cuando la liga está completa.
+    Usa la fecha actual + 7 días como fecha de inicio por defecto.
+    """
+    liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
+    if not liga:
+        return {"error": "Liga no encontrada"}
+    
+    # Obtener equipos de la liga
+    equipos_cursor = equipos_col.find({"liga_id": liga_id})
+    equipos_docs = await equipos_cursor.to_list(length=50)
+    
+    if len(equipos_docs) < 2:
+        return {"error": "Se necesitan al menos 2 equipos"}
+    
+    equipos_nombres = [eq["nombre"] for eq in equipos_docs]
+    
+    # Generar fixture
+    fixture = _generar_fixture_round_robin_liga(equipos_nombres, liga_id)
+    
+    # Fecha de inicio: hoy + 7 días por defecto
+    from datetime import timedelta
+    fecha_base = datetime.utcnow() + timedelta(days=7)
+    dias_entre_jornadas = 3
+    hora_default = "20:00"
+    
+    # Crear partidos en BD
+    partidos_creados = 0
+    for jornada_data in fixture:
+        jornada_num = jornada_data["jornada"]
+        fecha_jornada = fecha_base + timedelta(days=(jornada_num - 1) * dias_entre_jornadas)
+        
+        for partido in jornada_data["partidos"]:
+            fecha_hora = datetime.combine(
+                fecha_jornada.date(), 
+                datetime.strptime(hora_default, "%H:%M").time()
+            )
+            
+            await partidos_col.insert_one({
+                "guild_id": "0",
+                "liga_id": liga_id,
+                "liga_nombre": liga.get("nombre"),
+                "equipo_local": partido["equipo_local"],
+                "equipo_visitante": partido["equipo_visitante"],
+                "fecha_hora": fecha_hora.isoformat(),
+                "jornada": jornada_num,
+                "fase": "Liga Regular",
+                "sub_fase": partido.get("fase", "ida"),
+                "estado": "pendiente",
+                "auto_generado": True,
+                "creado_en": datetime.utcnow()
+            })
+            partidos_creados += 1
+    
+    # Actualizar estado de la liga a "en_curso"
+    total_jornadas = len(fixture)
+    await ligas_col.update_one(
+        {"_id": ObjectId(liga_id)},
+        {"$set": {
+            "estado": "en_curso",
+            "jornada_actual": 1,
+            "total_jornadas": total_jornadas,
+            "jornadas_ida": total_jornadas // 2,
+            "jornadas_vuelta": total_jornadas // 2,
+            "updated_at": datetime.utcnow(),
+            "fixture_generado_en": datetime.utcnow(),
+            "fecha_inicio": fecha_base.strftime("%Y-%m-%d"),
+            "partidos_generados": partidos_creados
+        }}
+    )
+    
+    return {
+        "message": f"Fixture generado automáticamente para '{liga.get('nombre')}'",
+        "equipos": len(equipos_nombres),
+        "jornadas_total": total_jornadas,
+        "partidos_creados": partidos_creados,
+        "fecha_inicio": fecha_base.strftime("%Y-%m-%d"),
+        "estado_liga": "en_curso"
     }
 
 @router.delete("/ligas/{liga_id}/equipos/{equipo_id}")
