@@ -43,49 +43,111 @@ async def get_equipos():
     return equipos
 
 @router.get("/clasificacion")
-async def get_clasificacion():
+async def get_clasificacion(liga_id: str = None):
     """Obtiene la tabla de posiciones calculada según puntos y diferencia de goles.
     Lee la puntuación configurable del servidor desde server_config.
+    Si no se especifica liga_id, usa la liga activa del sistema.
     """
     equipos_col = get_collection("equipos")
+    partidos_col = get_collection("partidos")
     config_col = get_collection("server_config")
+    ligas_col = get_collection("ligas")
     
-    # Leer puntuación configurable (usar defaults si no existe)
+    # Determinar liga a consultar
+    if not liga_id:
+        # Buscar liga activa
+        config_global = await config_col.find_one({"_id": "config_global"})
+        if config_global and config_global.get("liga_activa_id"):
+            liga_id = config_global["liga_activa_id"]
+        else:
+            # Fallback: primera liga activa
+            liga = await ligas_col.find_one({"activa": True})
+            if liga:
+                liga_id = str(liga.get("_id"))
+    
+    # Obtener datos de la liga
+    liga = await ligas_col.find_one({"_id": ObjectId(liga_id)}) if liga_id else None
+    
+    # Leer puntuación configurable
     server_cfg = await config_col.find_one({})
-    pts_v = server_cfg.get("pts_victoria", 3) if server_cfg else 3
-    pts_e = server_cfg.get("pts_empate", 1) if server_cfg else 1
-    pts_d = server_cfg.get("pts_derrota", 0) if server_cfg else 0
+    pts_v = liga.get("puntos_victoria", 3) if liga else (server_cfg.get("pts_victoria", 3) if server_cfg else 3)
+    pts_e = liga.get("puntos_empate", 1) if liga else (server_cfg.get("pts_empate", 1) if server_cfg else 1)
+    pts_d = liga.get("puntos_derrota", 0) if liga else (server_cfg.get("pts_derrota", 0) if server_cfg else 0)
     
-    equipos_cursor = equipos_col.find({}, {"_id": 0, "nombre": 1, "estadisticas_temporada": 1, "logo_url": 1})
+    # Obtener equipos de la liga
+    query_equipos = {"liga_id": liga_id} if liga_id else {}
+    equipos_cursor = equipos_col.find(query_equipos, {"_id": 0, "nombre": 1, "logo_url": 1, "liga_id": 1})
     equipos_db = await equipos_cursor.to_list(100)
     
-    tabla = []
+    # Si no hay equipos con liga_id, fallback a todos
+    if not equipos_db and liga_id:
+        equipos_cursor = equipos_col.find({}, {"_id": 0, "nombre": 1, "logo_url": 1})
+        equipos_db = await equipos_cursor.to_list(100)
+    
+    # Obtener partidos finalizados de la liga
+    query_partidos = {
+        "estado": {"$in": ["finalizado", "walkover", "jugado"]}
+    }
+    if liga_id:
+        query_partidos["liga_id"] = liga_id
+    
+    partidos_cursor = partidos_col.find(query_partidos)
+    partidos = await partidos_cursor.to_list(length=1000)
+    
+    # Inicializar stats por equipo
+    stats_por_equipo = {}
     for eq in equipos_db:
-        stats = eq.get("estadisticas_temporada", {})
-        pg = stats.get("victorias", 0)
-        pe = stats.get("empates", 0)
-        pp = stats.get("derrotas", 0)
-        gf = stats.get("goles_favor", 0)
-        gc = stats.get("goles_contra", 0)
-        
-        # Calcular dinámicos con puntuación configurable
-        pj = pg + pe + pp
-        puntos = (pg * pts_v) + (pe * pts_e) + (pp * pts_d)
-        dif_goles = gf - gc
-        
-        tabla.append({
-            "equipo": eq.get("nombre", "Desconocido"),
+        nombre = eq.get("nombre", "Desconocido")
+        stats_por_equipo[nombre] = {
+            "equipo": nombre,
             "logo": eq.get("logo_url", "https://cdn.discordapp.com/embed/avatars/0.png"),
-            "pj": pj,
-            "pg": pg,
-            "pe": pe,
-            "pp": pp,
-            "gf": gf,
-            "gc": gc,
-            "dg": dif_goles,
-            "pts": puntos
-        })
+            "pj": 0, "pg": 0, "pe": 0, "pp": 0,
+            "gf": 0, "gc": 0, "pts": 0
+        }
+    
+    # Procesar partidos
+    for p in partidos:
+        local = p.get("equipo_local")
+        visitante = p.get("equipo_visitante")
+        gl = p.get("goles_local", 0)
+        gv = p.get("goles_visitante", 0)
         
+        # Asegurar que ambos equipos existen en stats
+        if local not in stats_por_equipo:
+            stats_por_equipo[local] = {"equipo": local, "logo": "https://cdn.discordapp.com/embed/avatars/0.png", "pj": 0, "pg": 0, "pe": 0, "pp": 0, "gf": 0, "gc": 0, "pts": 0}
+        if visitante not in stats_por_equipo:
+            stats_por_equipo[visitante] = {"equipo": visitante, "logo": "https://cdn.discordapp.com/embed/avatars/0.png", "pj": 0, "pg": 0, "pe": 0, "pp": 0, "gf": 0, "gc": 0, "pts": 0}
+        
+        # Actualizar stats
+        stats_por_equipo[local]["pj"] += 1
+        stats_por_equipo[visitante]["pj"] += 1
+        stats_por_equipo[local]["gf"] += gl
+        stats_por_equipo[local]["gc"] += gv
+        stats_por_equipo[visitante]["gf"] += gv
+        stats_por_equipo[visitante]["gc"] += gl
+        
+        if gl > gv:  # Gana local
+            stats_por_equipo[local]["pg"] += 1
+            stats_por_equipo[local]["pts"] += pts_v
+            stats_por_equipo[visitante]["pp"] += 1
+            stats_por_equipo[visitante]["pts"] += pts_d
+        elif gl < gv:  # Gana visitante
+            stats_por_equipo[visitante]["pg"] += 1
+            stats_por_equipo[visitante]["pts"] += pts_v
+            stats_por_equipo[local]["pp"] += 1
+            stats_por_equipo[local]["pts"] += pts_d
+        else:  # Empate
+            stats_por_equipo[local]["pe"] += 1
+            stats_por_equipo[local]["pts"] += pts_e
+            stats_por_equipo[visitante]["pe"] += 1
+            stats_por_equipo[visitante]["pts"] += pts_e
+    
+    # Convertir a lista y calcular diferencia de goles
+    tabla = []
+    for nombre, stats in stats_por_equipo.items():
+        stats["dg"] = stats["gf"] - stats["gc"]
+        tabla.append(stats)
+    
     # Ordenar por: 1º Puntos, 2º Diferencia Goles, 3º Goles Favor
     tabla_ordenada = sorted(tabla, key=lambda x: (x["pts"], x["dg"], x["gf"]), reverse=True)
     
@@ -93,11 +155,42 @@ async def get_clasificacion():
     for i, t in enumerate(tabla_ordenada):
         t["pos"] = i + 1
     
-    # Incluir metadata de puntuación para el frontend
+    # Info de la liga
+    liga_info = None
+    if liga:
+        liga_info = {
+            "id": liga_id,
+            "nombre": liga.get("nombre"),
+            "division": liga.get("division"),
+            "jornada_actual": liga.get("jornada_actual", 1),
+            "estado": liga.get("estado", "configuracion")
+        }
+    
     return {
         "tabla": tabla_ordenada,
-        "puntuacion": {"victoria": pts_v, "empate": pts_e, "derrota": pts_d}
+        "puntuacion": {"victoria": pts_v, "empate": pts_e, "derrota": pts_d},
+        "liga": liga_info,
+        "total_partidos": len(partidos)
     }
+
+@router.get("/ligas-disponibles")
+async def get_ligas_disponibles():
+    """Obtiene lista de ligas activas para el selector de clasificación."""
+    ligas_col = get_collection("ligas")
+    
+    ligas_cursor = ligas_col.find({"activa": True}).sort("division", 1)
+    ligas = await ligas_cursor.to_list(length=20)
+    
+    return [
+        {
+            "id": str(l.get("_id")),
+            "nombre": l.get("nombre"),
+            "division": l.get("division"),
+            "estado": l.get("estado", "configuracion"),
+            "total_equipos": l.get("total_equipos", 0)
+        }
+        for l in ligas
+    ]
 
 @router.get("/stats/general")
 async def get_general_stats():

@@ -47,8 +47,14 @@ export const ligaService = {
         return response.data;
     },
 
-    getClasificacion: async () => {
-        const response = await api.get('/clasificacion');
+    getClasificacion: async (ligaId = null) => {
+        const query = ligaId ? `?liga_id=${ligaId}` : '';
+        const response = await api.get(`/clasificacion${query}`);
+        return response.data;
+    },
+
+    getLigasDisponibles: async () => {
+        const response = await api.get('/ligas-disponibles');
         return response.data;
     },
 
