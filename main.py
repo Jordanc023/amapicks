@@ -1,8 +1,18 @@
 import discord
 import os
 import sys
+import asyncio
 from datetime import datetime
 from discord.ext import commands, tasks
+
+# Forzar loop de evento para compatibilidad con discord.py + Python 3.11+
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
 # Importar configuración centralizada
 from config import (

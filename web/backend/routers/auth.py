@@ -1,7 +1,6 @@
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
 import os
 import httpx
 from jose import jwt, JWTError
@@ -17,7 +16,7 @@ async def require_current_user(credentials: HTTPAuthorizationCredentials = Depen
     """Dependencia que valida el JWT y retorna los datos del usuario."""
     token = credentials.credentials
     try:
-        payload = jwt.decode(token, os.getenv("SECRET_KEY", "supersecretkey_cambiar_en_produccion"), algorithms=["HS256"])
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
         if payload.get("exp") and payload["exp"] < datetime.utcnow().timestamp():
             raise HTTPException(status_code=401, detail="Token expirado")
         return payload
@@ -40,12 +39,15 @@ DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 # Ajusta esto si tu puerto/dominio cambia.
 # Debe coincidir EXACTAMENTE con lo que pongas en Discord Dev Portal
-DISCORD_REDIRECT_URI = "http://20.81.152.127:8001/api/auth/callback" 
-FRONTEND_URL = "http://20.81.152.127:5173"
+DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "http://localhost:8000/api/auth/callback")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey_cambiar_en_produccion")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 semana
+
+if not SECRET_KEY or SECRET_KEY == "supersecretkey_cambiar_en_produccion":
+    raise RuntimeError("SECRET_KEY insegura o ausente. Define SECRET_KEY en variables de entorno.")
 
 # --- OAUTH2 URLS ---
 DISCORD_LOGIN_URL = "https://discord.com/api/oauth2/authorize"
@@ -155,9 +157,10 @@ async def callback_discord(code: str):
     return RedirectResponse(f"{FRONTEND_URL}/auth/callback?token={jwt_token}")
 
 @router.get("/auth/me")
-async def get_current_user_info(token: str):
-    """Decodifica el token para validar sesión en frontend (opcional si frontend decodifica JWT)."""
+async def get_current_user_info(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Decodifica el token bearer para validar sesión en frontend."""
     try:
+        token = credentials.credentials
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
     except JWTError:

@@ -19,13 +19,11 @@ const Navbar = () => {
     }, []);
 
     const navLinks = [
-        { name: 'Dashboard', path: '/' },
-        { name: 'Mi Equipo', path: '/equipo' },
+        { name: 'Mi Equipo', path: '/' },
         { name: 'Mercado', path: '/mercado' },
         { name: 'Equipos', path: '/equipos' },
         { name: 'Clasificación', path: '/clasificacion' },
         { name: 'Jornadas', path: '/jornadas' },
-        { name: 'Estadísticas', path: '/estadisticas' },
     ];
 
     return (

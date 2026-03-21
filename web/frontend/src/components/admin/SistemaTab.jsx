@@ -241,11 +241,15 @@ const SistemaTab = ({
                                 </div>
                                 <div>
                                     <h3 className="text-lg font-medium text-white">Configuración del Juego</h3>
-                                    <p className="text-gray-500 text-xs">Variables en tiempo real</p>
+                                    <p className="text-gray-500 text-xs">Variables en tiempo real del servidor y del bot</p>
                                 </div>
                             </div>
                         </div>
                         <div className="p-6 space-y-6 flex-1 relative">
+                            <p className="text-xs text-gray-500">
+                                Puntos (victoria/empate/derrota) y goles W.O. se configuran por liga en{' '}
+                                <span className="text-gold-400">Admin → Ligas</span> (crear o editar).
+                            </p>
                             {loadingConfig ? (
                                 <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-10">
                                     <div className="w-8 h-8 border-4 border-gold-500/30 border-t-gold-500 rounded-full animate-spin"></div>
@@ -283,53 +287,7 @@ const SistemaTab = ({
                                     />
                                 </div>
 
-                                <div className="grid grid-cols-3 gap-2 border-t border-white/5 pt-4">
-                                    <div>
-                                        <label className="text-[11px] text-gray-500 mb-1 block uppercase text-center">Pts. Victoria</label>
-                                        <input
-                                            type="number"
-                                            value={globalConfig?.pts_victoria ?? 3}
-                                            onChange={e => setGlobalConfig({ ...globalConfig, pts_victoria: e.target.value })}
-                                            className="w-full bg-[#161b22] border border-green-500/20 rounded-lg p-2 text-center text-green-400 font-bold focus:outline-none focus:border-green-500" />
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] text-gray-500 mb-1 block uppercase text-center">Pts. Empate</label>
-                                        <input
-                                            type="number"
-                                            value={globalConfig?.pts_empate ?? 1}
-                                            onChange={e => setGlobalConfig({ ...globalConfig, pts_empate: e.target.value })}
-                                            className="w-full bg-[#161b22] border border-blue-500/20 rounded-lg p-2 text-center text-blue-400 font-bold focus:outline-none focus:border-blue-500" />
-                                    </div>
-                                    <div>
-                                        <label className="text-[11px] text-gray-500 mb-1 block uppercase text-center">Pts. Derrota</label>
-                                        <input
-                                            type="number"
-                                            value={globalConfig?.pts_derrota ?? 0}
-                                            onChange={e => setGlobalConfig({ ...globalConfig, pts_derrota: e.target.value })}
-                                            className="w-full bg-[#161b22] border border-red-500/20 rounded-lg p-2 text-center text-red-400 font-bold focus:outline-none focus:border-red-500" />
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-4 border-t border-white/5 pt-4">
-                                    <div>
-                                        <label className="text-xs text-gray-400 mb-1 block">Goles W.O. a Favor</label>
-                                        <input
-                                            type="number"
-                                            value={globalConfig?.walkover_gf ?? 3}
-                                            onChange={(e) => setGlobalConfig({ ...globalConfig, walkover_gf: e.target.value })}
-                                            className="w-full bg-[#161b22] border border-white/10 rounded-lg p-2 text-center text-white focus:outline-none focus:border-gold-500/50" />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs text-gray-400 mb-1 block">Goles W.O. en Contra</label>
-                                        <input
-                                            type="number"
-                                            value={globalConfig?.walkover_gc ?? 0}
-                                            onChange={(e) => setGlobalConfig({ ...globalConfig, walkover_gc: e.target.value })}
-                                            className="w-full bg-[#161b22] border border-white/10 rounded-lg p-2 text-center text-white focus:outline-none focus:border-gold-500/50" />
-                                    </div>
-                                </div>
-
-                                <div className="border-t border-white/5 pt-2 grid gap-3">
+                                <div className="border-t border-white/5 pt-4 grid gap-3">
                                     <div>
                                         <label className="text-xs text-gray-500 mb-1 block">Rutas de Texto (IDs o Nombres exactos)</label>
                                         <div className="grid grid-cols-2 gap-2">
@@ -348,7 +306,7 @@ const SistemaTab = ({
                                 disabled={saving === 'global-config'}
                                 className="w-full py-3 bg-gradient-to-r from-gold-500 to-gold-600 text-black hover:from-gold-400 hover:to-gold-500 font-bold rounded-lg transition-colors text-sm shadow-[0_0_15px_rgba(234,179,8,0.2)]"
                             >
-                                {saving === 'global-config' ? 'Aplicando Reglas...' : 'Guardar y Aplicar Reglas a la Liga'}
+                                {saving === 'global-config' ? 'Guardando...' : 'Guardar ajustes globales del servidor'}
                             </button>
                         </div>
                     </div>

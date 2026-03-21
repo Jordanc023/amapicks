@@ -17,6 +17,7 @@ export default function useAdminData() {
     const [systemStatus, setSystemStatus] = useState(null);
     const [estadoLiga, setEstadoLiga] = useState(null);
     const [partidosPendientes, setPartidosPendientes] = useState([]);
+    const [partidosTodos, setPartidosTodos] = useState([]);
     const [globalConfig, setGlobalConfig] = useState(null);
     const [loadingConfig, setLoadingConfig] = useState(false);
 
@@ -29,18 +30,17 @@ export default function useAdminData() {
     // --- Form States ---
     const [presupuestos, setPresupuestos] = useState({});
     const [preciosJugadores, setPreciosJugadores] = useState({});
-    const [puntuacion, setPuntuacion] = useState({ pts_victoria: 3, pts_empate: 1, pts_derrota: 0 });
+    const [puntuacion, setPuntuacion] = useState({
+        pts_victoria: 3,
+        pts_empate: 1,
+        pts_derrota: 0,
+        walkover_gf: 3,
+        walkover_gc: 0,
+        liga_nombre: null,
+        liga_id: null,
+    });
     const [resultadoForm, setResultadoForm] = useState({ equipo_local: '', equipo_visitante: '', goles_local: 0, goles_visitante: 0 });
     const [walkoverForm, setWalkoverForm] = useState({ ganador: '', perdedor: '' });
-    const [calendarioForm, setCalendarioForm] = useState({
-        dias_entre_jornadas: 3,
-        fecha_inicio: '',
-        hora_default: '20:00',
-        playoffs_habilitados: true,
-        clasificados_playoffs: 4,
-        tipo_liga: 'estandar',
-        dias_pausa_copa: 7
-    });
     const [anuncioForm, setAnuncioForm] = useState({ titulo: '', mensaje: '', imagen_url: '', color: '#9b59b6', canal_destino: 'anuncios' });
 
     // --- Modal State ---
@@ -60,13 +60,14 @@ export default function useAdminData() {
     const loadData = useCallback(async () => {
         try {
             setLoading(true);
-            const [eqRes, jRes, auditRes, statusRes, ligaEstado, pendientes] = await Promise.all([
+            const [eqRes, jRes, auditRes, statusRes, ligaEstado, pendientes, todosPartidos] = await Promise.all([
                 ligaService.getEquipos().catch(() => []),
                 ligaService.getJugadores().catch(() => []),
                 ligaService.getAuditoria().catch(() => []),
                 ligaService.getSystemStatus().catch(() => null),
                 ligaService.getEstadoLiga().catch(() => null),
-                ligaService.getPartidosPendientes().catch(() => [])
+                ligaService.getPartidosPendientes().catch(() => []),
+                ligaService.getPartidos(null).catch(() => [])
             ]);
 
             setEquipos(eqRes);
@@ -75,6 +76,18 @@ export default function useAdminData() {
             setSystemStatus(statusRes);
             setEstadoLiga(ligaEstado);
             setPartidosPendientes(pendientes);
+            const ligaRegular = Array.isArray(todosPartidos)
+                ? todosPartidos.filter((p) => !p.copa && (!p.fase || p.fase === 'Liga Regular' || p.fase === 'LIGA'))
+                : [];
+            ligaRegular.sort((a, b) => {
+                const ja = a.jornada ?? 0;
+                const jb = b.jornada ?? 0;
+                if (ja !== jb) return ja - jb;
+                const fa = String(a.fecha_hora || a.fecha_programada || '');
+                const fb = String(b.fecha_hora || b.fecha_programada || '');
+                return fa.localeCompare(fb);
+            });
+            setPartidosTodos(ligaRegular);
 
             // Inicializar presupuestos
             const budgets = {};
@@ -93,12 +106,30 @@ export default function useAdminData() {
                 };
             });
             setPreciosJugadores(precios);
+
+            if (user?.admin) {
+                try {
+                    const d = await ligaService.getPuntuacion();
+                    setPuntuacion((prev) => ({
+                        ...prev,
+                        pts_victoria: d.pts_victoria ?? 3,
+                        pts_empate: d.pts_empate ?? 1,
+                        pts_derrota: d.pts_derrota ?? 0,
+                        walkover_gf: d.walkover_gf ?? 3,
+                        walkover_gc: d.walkover_gc ?? 0,
+                        liga_nombre: d.liga_nombre ?? null,
+                        liga_id: d.liga_id ?? null,
+                    }));
+                } catch (_) {
+                    /* ignorar */
+                }
+            }
         } catch (error) {
             console.error('Error cargando datos admin:', error);
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [user?.admin]);
 
     // Cargar config global cuando se cambia al subtab 'config'
     useEffect(() => {
@@ -121,13 +152,13 @@ export default function useAdminData() {
     //  EQUIPOS HANDLERS
     // ========================================================================
     const handlePresupuestoChange = (equipoId, value) => {
-        setPresupuestos(prev => ({ ...prev, [equipoId]: parseInt(value) || 0 }));
+        setPresupuestos(prev => ({ ...prev, [equipoId]: value }));
     };
 
     const handleUpdatePresupuesto = async (equipoId) => {
         setSaving(equipoId);
         try {
-            await ligaService.updatePresupuesto(equipoId, presupuestos[equipoId]);
+            await ligaService.updatePresupuesto(equipoId, Number(presupuestos[equipoId]) || 0);
             alert("✅ Presupuesto actualizado correctamente.");
         } catch (error) {
             console.error(error);
@@ -143,7 +174,7 @@ export default function useAdminData() {
     const handlePrecioJugadorChange = (discordId, field, value) => {
         setPreciosJugadores(prev => ({
             ...prev,
-            [discordId]: { ...prev[discordId], [field]: parseInt(value) || 0 }
+            [discordId]: { ...prev[discordId], [field]: value }
         }));
     };
 
@@ -151,7 +182,7 @@ export default function useAdminData() {
         setSaving(discordId);
         try {
             const { precio, clausula } = preciosJugadores[discordId];
-            await ligaService.updatePrecioJugador(discordId, precio, clausula);
+            await ligaService.updatePrecioJugador(discordId, Number(precio) || 0, Number(clausula) || 0);
             alert("✅ Valor del jugador actualizado.");
         } catch (error) {
             console.error(error);
@@ -225,10 +256,30 @@ export default function useAdminData() {
     const handleSavePuntuacion = async () => {
         setSaving('puntuacion');
         try {
-            await ligaService.updatePuntuacion(puntuacion.pts_victoria, puntuacion.pts_empate, puntuacion.pts_derrota);
-            alert("✅ Puntuación actualizada y tabla recalculada.");
-        } catch (e) { alert("❌ Error al guardar puntuación."); }
-        finally { setSaving(null); }
+            await ligaService.updatePuntuacion({
+                pts_victoria: parseInt(puntuacion.pts_victoria, 10) || 0,
+                pts_empate: parseInt(puntuacion.pts_empate, 10) || 0,
+                pts_derrota: parseInt(puntuacion.pts_derrota, 10) || 0,
+                walkover_gf: parseInt(puntuacion.walkover_gf, 10) || 3,
+                walkover_gc: parseInt(puntuacion.walkover_gc, 10) || 0,
+            });
+            const d = await ligaService.getPuntuacion();
+            setPuntuacion((prev) => ({
+                ...prev,
+                pts_victoria: d.pts_victoria ?? 3,
+                pts_empate: d.pts_empate ?? 1,
+                pts_derrota: d.pts_derrota ?? 0,
+                walkover_gf: d.walkover_gf ?? 3,
+                walkover_gc: d.walkover_gc ?? 0,
+                liga_nombre: d.liga_nombre ?? null,
+                liga_id: d.liga_id ?? null,
+            }));
+            alert('✅ Puntuación actualizada en la liga activa, espejada al servidor y tabla recalculada.');
+        } catch (e) {
+            alert('❌ Error al guardar puntuación.');
+        } finally {
+            setSaving(null);
+        }
     };
 
     const handleRegistrarResultadoManual = async () => {
@@ -282,34 +333,6 @@ export default function useAdminData() {
     // ========================================================================
     //  LIGA AUTOMATION HANDLERS
     // ========================================================================
-    const handleGenerarCalendario = async () => {
-        const { dias_entre_jornadas, fecha_inicio, hora_default, playoffs_habilitados, clasificados_playoffs, tipo_liga, dias_pausa_copa } = calendarioForm;
-        if (!fecha_inicio) {
-            alert("❌ Debes seleccionar una fecha de inicio.");
-            return;
-        }
-        if (!window.confirm(`¿Generar calendario completo?\n\n• ${equipos.length} equipos\n• Formato: ${tipo_liga === 'd1' ? 'Liga D1 (Ida y Vuelta con Pausa)' : 'Todos contra todos'}\n• ${dias_entre_jornadas} días entre jornadas\n• Playoffs: ${playoffs_habilitados ? 'Sí' : 'No'}`)) return;
-
-        setSaving('calendario');
-        try {
-            const res = await ligaService.generarCalendarioLiga(
-                dias_entre_jornadas,
-                fecha_inicio,
-                hora_default,
-                playoffs_habilitados,
-                clasificados_playoffs,
-                tipo_liga,
-                dias_pausa_copa
-            );
-            alert(`✅ ${res.message}\n📊 ${res.equipos} equipos, ${res.jornadas} jornadas, ${res.partidos_creados} partidos creados`);
-            await loadData();
-        } catch (e) {
-            alert("❌ Error al generar calendario.");
-            console.error(e);
-        }
-        finally { setSaving(null); }
-    };
-
     const handleGenerarPlayoffs = async () => {
         if (!window.confirm("¿Generar playoffs automáticamente basados en la tabla de posiciones actual?\n\nSe crearán semifinales: 1° vs 4°, 2° vs 3°")) return;
         setSaving('playoffs');
@@ -465,12 +488,7 @@ export default function useAdminData() {
         try {
             const res = await ligaService.updateGlobalConfig({
                 ...globalConfig,
-                limite_plantilla: parseInt(globalConfig.limite_plantilla) || 12,
-                pts_victoria: parseInt(globalConfig.pts_victoria) || 3,
-                pts_empate: parseInt(globalConfig.pts_empate) || 1,
-                pts_derrota: parseInt(globalConfig.pts_derrota) || 0,
-                walkover_gf: parseInt(globalConfig.walkover_gf) || 3,
-                walkover_gc: parseInt(globalConfig.walkover_gc) || 0
+                limite_plantilla: parseInt(globalConfig.limite_plantilla) || 12
             });
             alert(`✅ ${res.message}`);
         } catch (error) {
@@ -508,6 +526,7 @@ export default function useAdminData() {
         systemStatus,
         estadoLiga,
         partidosPendientes,
+        partidosTodos,
         globalConfig,
         loadingConfig,
 
@@ -529,8 +548,6 @@ export default function useAdminData() {
         setResultadoForm,
         walkoverForm,
         setWalkoverForm,
-        calendarioForm,
-        setCalendarioForm,
         anuncioForm,
         setAnuncioForm,
         setGlobalConfig,
@@ -580,7 +597,6 @@ export default function useAdminData() {
         handleResetearTabla,
 
         // Liga automation handlers
-        handleGenerarCalendario,
         handleGenerarPlayoffs,
 
         // System handlers

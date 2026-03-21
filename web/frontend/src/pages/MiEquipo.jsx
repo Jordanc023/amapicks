@@ -3,21 +3,38 @@ import { useAuth } from '../context/AuthContext';
 import { ligaService } from '../services/api';
 import {
     Shield, Users, DollarSign, UserCircle, TrendingUp,
-    Calendar, Star, Award, Zap, Activity, Crown, ChevronRight
+    Calendar, Star, Award, Zap, Activity, Crown, ChevronRight, 
+    CircleDollarSign, Handshake, Send, AlertTriangle, ArrowRight
 } from 'lucide-react';
 
 const MiEquipo = () => {
-    const { user, loading: authLoading } = useAuth();
+    const { user, login, loading: authLoading } = useAuth();
     const [miJugador, setMiJugador] = useState(null);
     const [equipo, setEquipo] = useState(null);
     const [jugadores, setJugadores] = useState([]);
+    const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
+
+    // Acciones rápidas
+    const actions = [
+        { label: 'Ofertas Pendientes', icon: Handshake, tooltip: 'Revisar ofertas actuales', color: 'border-blue-400 text-blue-300' },
+        { label: 'Solicitar Cesión', icon: Send, tooltip: 'Abrir formulario de cesión', color: 'border-green-400 text-green-300' },
+        { label: 'Reportar Partido', icon: AlertTriangle, tooltip: 'Reportar resultados o incidents', color: 'border-yellow-400 text-yellow-300' },
+    ];
 
     useEffect(() => {
         const cargarDatos = async () => {
             if (!user) return;
             setLoading(true);
             try {
+                // 0. Cargar stats generales
+                try {
+                    const statsData = await ligaService.getStats();
+                    setStats(statsData);
+                } catch (err) {
+                    console.log("No se pudieron cargar stats");
+                }
+
                 // 1. Buscar datos del jugador logueado
                 try {
                     const jugadorData = await ligaService.getJugadorDetalle(user.sub);
@@ -102,10 +119,16 @@ const MiEquipo = () => {
                     <p className="text-gray-400 text-lg mb-8">
                         Inicia sesión con Discord para ver tu carta de jugador y gestionar tu equipo.
                     </p>
-                    <div className="inline-flex items-center gap-2 px-4 py-2 bg-[#5865F2]/10 border border-[#5865F2]/30 rounded-xl text-[#5865F2] text-sm font-bold">
-                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03z" /></svg>
-                        Usa el botón de Login arriba
-                    </div>
+                    <button
+                        type="button"
+                        onClick={() => login()}
+                        className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-[#5865F2] hover:bg-[#4752C4] text-white text-base font-bold border border-white/10 shadow-lg transition-colors"
+                    >
+                        <svg className="w-6 h-6 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                            <path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03z" />
+                        </svg>
+                        Entrar con Discord
+                    </button>
                 </div>
             </div>
         );
@@ -236,6 +259,70 @@ const MiEquipo = () => {
 
                                 {/* ===== RIGHT: DETALLES ===== */}
                                 <div className="flex-1 p-8 overflow-y-auto">
+                                    {/* ===== KPIs ===== */}
+                                    <div className="mb-8">
+                                        <h3 className="flex items-center gap-2 text-gold-500 font-display font-bold text-lg uppercase tracking-widest mb-4">
+                                            <TrendingUp size={20} /> Panel de Control
+                                        </h3>
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                            <div className="group relative overflow-hidden">
+                                                <div className="relative bg-dark-800 border border-white/10 group-hover:border-white/20 rounded-2xl p-4 transition-all duration-300 hover:-translate-y-0.5">
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <span className="text-xs uppercase tracking-widest font-semibold text-gray-400 group-hover:text-gray-300 transition-colors">Presupuesto</span>
+                                                        <div className="p-2 rounded-lg bg-green-500/10 border-green-500/30 text-green-300 transition-transform duration-300 group-hover:scale-110">
+                                                            <CircleDollarSign className="w-4 h-4" />
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-2xl font-display font-black text-white transition-all duration-300 group-hover:text-gold-400">
+                                                        ${stats?.presupuesto ? new Intl.NumberFormat('en-US').format(stats.presupuesto).split('.')[0] : '0'}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="group relative overflow-hidden">
+                                                <div className="relative bg-dark-800 border border-white/10 group-hover:border-white/20 rounded-2xl p-4 transition-all duration-300 hover:-translate-y-0.5">
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <span className="text-xs uppercase tracking-widest font-semibold text-gray-400 group-hover:text-gray-300 transition-colors">Plantilla</span>
+                                                        <div className="p-2 rounded-lg bg-blue-500/10 border-blue-500/30 text-blue-300 transition-transform duration-300 group-hover:scale-110">
+                                                            <Users className="w-4 h-4" />
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-2xl font-display font-black text-white transition-all duration-300 group-hover:text-gold-400">
+                                                        {stats?.jugadores || 0}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="group relative overflow-hidden">
+                                                <div className="relative bg-dark-800 border border-white/10 group-hover:border-white/20 rounded-2xl p-4 transition-all duration-300 hover:-translate-y-0.5">
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <span className="text-xs uppercase tracking-widest font-semibold text-gray-400 group-hover:text-gray-300 transition-colors">Cuota Libre</span>
+                                                        <div className="p-2 rounded-lg bg-yellow-500/10 border-yellow-500/30 text-yellow-300 transition-transform duration-300 group-hover:scale-110">
+                                                            <Shield className="w-4 h-4" />
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-2xl font-display font-black text-white transition-all duration-300 group-hover:text-gold-400">
+                                                        {stats?.cuposLibres ?? 0}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="group relative overflow-hidden">
+                                                <div className="relative bg-dark-800 border border-white/10 group-hover:border-white/20 rounded-2xl p-4 transition-all duration-300 hover:-translate-y-0.5">
+                                                    <div className="flex items-center justify-between mb-3">
+                                                        <span className="text-xs uppercase tracking-widest font-semibold text-gray-400 group-hover:text-gray-300 transition-colors">Salud</span>
+                                                        <div className="p-2 rounded-lg bg-violet-500/10 border-violet-500/30 text-violet-300 transition-transform duration-300 group-hover:scale-110">
+                                                            <Activity className="w-4 h-4" />
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-2xl font-display font-black text-white transition-all duration-300 group-hover:text-gold-400">
+                                                        {stats?.saludPlantilla ? `${stats.saludPlantilla}%` : '100%'}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
                                     {/* Quick Stats Bar */}
                                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
                                         <div className="bg-dark-800 border border-white/5 rounded-xl p-4 text-center group hover:border-gold-500/20 transition-all">
@@ -320,119 +407,40 @@ const MiEquipo = () => {
                                             )}
                                         </div>
                                     </div>
+
+                                    {/* Acciones rápidas - dentro de la tarjeta */}
+                                    <div className="mt-8">
+                                        <h3 className="text-gold-500 font-display font-bold text-lg uppercase tracking-widest mb-4">
+                                            Acciones Rápidas
+                                        </h3>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            {actions.map((action, idx) => {
+                                                const ActionIcon = action.icon;
+                                                return (
+                                                    <button
+                                                        key={action.label}
+                                                        title={action.tooltip}
+                                                        className="group relative overflow-hidden rounded-lg transition-all duration-300 hover:-translate-y-0.5"
+                                                        style={{ animationDelay: `${idx * 50}ms` }}
+                                                        onClick={action.action}
+                                                    >
+                                                        <div className="absolute inset-0 bg-dark-800 border border-white/10 group-hover:border-white/20 rounded-lg transition-all duration-300" />
+                                                        <div className="relative px-4 py-3 flex items-center gap-2 group-hover:gap-3 transition-all duration-300">
+                                                            <ActionIcon className="w-4 h-4 text-white" />
+                                                            <span className="text-xs font-bold text-white uppercase">
+                                                                {action.label}
+                                                            </span>
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
-
-                {/* ===== SECCIÓN 2: DASHBOARD DT ===== */}
-                {equipo && esDT && (
-                    <div className="mb-12">
-                        <div className="flex items-center gap-3 mb-6">
-                            <div className="w-10 h-10 bg-gold-500/10 border border-gold-500/30 rounded-xl flex items-center justify-center">
-                                <Crown size={20} className="text-gold-500" />
-                            </div>
-                            <div>
-                                <h2 className="text-2xl font-display font-black text-white uppercase tracking-tight">
-                                    Panel DT — {equipo.nombre || equipo.role_name}
-                                </h2>
-                                <p className="text-gray-500 text-sm">Gestión de tu equipo</p>
-                            </div>
-                        </div>
-
-                        {/* DT Stats */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-                            <div className="bg-dark-900 border border-white/10 rounded-2xl p-5 group hover:border-gold-500/30 transition-all">
-                                <div className="flex items-center justify-between mb-3">
-                                    <DollarSign className="w-5 h-5 text-gold-500" />
-                                    <span className="text-xs text-gray-600 uppercase tracking-widest">Presupuesto</span>
-                                </div>
-                                <span className="text-3xl font-black text-gold-500">
-                                    ${new Intl.NumberFormat('en-US').format(equipo.presupuesto || 0)}
-                                </span>
-                            </div>
-                            <div className="bg-dark-900 border border-white/10 rounded-2xl p-5 group hover:border-gold-500/30 transition-all">
-                                <div className="flex items-center justify-between mb-3">
-                                    <Users className="w-5 h-5 text-blue-400" />
-                                    <span className="text-xs text-gray-600 uppercase tracking-widest">Plantilla</span>
-                                </div>
-                                <span className="text-3xl font-black text-white">
-                                    {jugadores.length}<span className="text-gray-600 text-lg">/12</span>
-                                </span>
-                            </div>
-                            <div className="bg-dark-900 border border-white/10 rounded-2xl p-5 group hover:border-gold-500/30 transition-all">
-                                <div className="flex items-center justify-between mb-3">
-                                    <Star className="w-5 h-5 text-yellow-400" />
-                                    <span className="text-xs text-gray-600 uppercase tracking-widest">Cupos</span>
-                                </div>
-                                <span className={`text-3xl font-black ${12 - jugadores.length > 3 ? 'text-green-400' : 12 - jugadores.length > 0 ? 'text-yellow-400' : 'text-red-400'}`}>
-                                    {12 - jugadores.length}
-                                </span>
-                            </div>
-                            <div className="bg-dark-900 border border-white/10 rounded-2xl p-5 group hover:border-gold-500/30 transition-all">
-                                <div className="flex items-center justify-between mb-3">
-                                    <Activity className="w-5 h-5 text-purple-400" />
-                                    <span className="text-xs text-gray-600 uppercase tracking-widest">Valor Plan.</span>
-                                </div>
-                                <span className="text-3xl font-black text-white">
-                                    ${new Intl.NumberFormat('en-US').format(
-                                        jugadores.reduce((sum, j) => sum + (j.precio || 0), 0)
-                                    )}
-                                </span>
-                            </div>
-                        </div>
-
-                        {/* Plantilla Grid */}
-                        <h3 className="flex items-center gap-2 text-gold-500 font-display font-bold text-lg uppercase tracking-widest mb-5">
-                            <Users size={20} /> Plantilla
-                        </h3>
-
-                        {jugadores.length > 0 ? (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                                {jugadores.map((jugador, idx) => {
-                                    const jPosColor = getPosColor(jugador.posicion);
-                                    return (
-                                        <div key={idx} className="bg-dark-800 border border-white/10 rounded-2xl p-5 flex items-center gap-4 hover:border-gold-500/20 transition-all group cursor-default">
-                                            <div className="relative">
-                                                <img
-                                                    src={jugador.avatar_url || `https://cdn.discordapp.com/embed/avatars/${idx % 5}.png`}
-                                                    alt={jugador.nombre}
-                                                    className="w-14 h-14 rounded-full border-2 border-dark-700 object-cover group-hover:border-gold-500/40 transition-colors"
-                                                />
-                                                {jugador.es_dt && (
-                                                    <div className="absolute -top-1 -right-1 w-5 h-5 bg-gold-500 rounded-full flex items-center justify-center">
-                                                        <Crown size={10} className="text-black" />
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <h4 className="text-white font-bold text-sm truncate">{jugador.nombre}</h4>
-                                                <div className="flex items-center gap-2 mt-1">
-                                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${jPosColor.text} bg-dark-900 border-white/10`}>
-                                                        {jugador.posicion || '?'}
-                                                    </span>
-                                                    <span className="text-xs text-gold-500 font-bold">
-                                                        ${new Intl.NumberFormat('en-US').format(jugador.precio || 0)}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <ChevronRight size={16} className="text-gray-700 group-hover:text-gold-500 transition-colors flex-shrink-0" />
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        ) : (
-                            <div className="bg-dark-800/50 border border-white/5 rounded-2xl p-10 text-center">
-                                <Users className="w-12 h-12 text-gray-700 mx-auto mb-4" />
-                                <p className="text-gray-500 mb-1">Tu plantilla está vacía.</p>
-                                <p className="text-gray-600 text-sm">
-                                    Usa <code className="text-white bg-dark-800 px-1.5 py-0.5 rounded text-xs">/fichar</code> en Discord para fichar jugadores.
-                                </p>
-                            </div>
-                        )}
-                    </div>
-                )}
 
                 {/* ===== Si no es DT y no tiene datos de jugador ===== */}
                 {!miJugador && !equipo && (

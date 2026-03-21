@@ -146,6 +146,9 @@ class AuditAction:
     # Mercado
     MERCADO_ABIERTO = "MERCADO_ABIERTO"
     MERCADO_CERRADO = "MERCADO_CERRADO"
+
+    # Cesiones (préstamos)
+    CESION = "CESION"
     
     # Admin
     SINCRONIZACION = "SINCRONIZACION"

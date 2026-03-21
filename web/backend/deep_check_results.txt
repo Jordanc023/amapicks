@@ -1,0 +1,27 @@
+Databases found: ['haxball', 'liga_bot', 'sample_mflix', 'admin', 'local']
+
+--- Database: haxball (3 collections) ---
+  [players] -> 3555 docs
+  [playerstats] -> 0 docs
+  [verifications] -> 0 docs
+
+--- Database: liga_bot (17 collections) ---
+  [agentes_libres] -> 0 docs
+  [audit_logs] -> 228 docs
+  [canales_bloqueados] -> 1 docs
+  [clubes_pendientes_creacion] -> 0 docs
+  [config_col] -> 2 docs
+  [config_liga] -> 1 docs
+  [configuracion] -> 1 docs
+  [dt_tokens] -> 2 docs
+  [equipos] -> 4 docs
+    Sample: {'nombre': '-MADRIDFC', 'detectado': datetime.datetime(2026, 3, 20, 20, 57, 2, 830000), 'liga_divisi...
+  [jugadores] -> 1 docs
+    Sample: {'discord_id': '555553252863901727', 'avatar_url': 'https://cdn.discordapp.com/avatars/5555532528639...
+  [ligas] -> 1 docs
+  [ofertas_pendientes] -> 0 docs
+  [partidos] -> 12 docs
+  [server_config] -> 2 docs
+  [tabla_posiciones] -> 0 docs
+  [temporadas] -> 2 docs
+  [transacciones_finacieras] -> 4 docs

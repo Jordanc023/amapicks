@@ -45,3 +45,113 @@ h6 {
 .card-hover {
     @apply transition-all duration-300 hover:transform hover:-translate-y-1 hover:shadow-gold;
 }
+
+/* Estilos para la barra lateral flotante */
+.floating-sidebar {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+.floating-sidebar nav {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.floating-sidebar .group:hover {
+    transform: translateX(2px);
+}
+
+/* Animación de entrada para el sidebar */
+@keyframes slideInLeft {
+    from {
+        transform: translateX(-100%) translateY(-50%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0) translateY(-50%);
+        opacity: 1;
+    }
+}
+
+.floating-sidebar {
+    animation: slideInLeft 0.5s ease-out;
+}
+
+/* Efecto de brillo en hover */
+.floating-sidebar .group::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    transition: left 0.5s;
+}
+
+.floating-sidebar .group:hover::before {
+    left: 100%;
+}
+
+/* Responsividad para móviles */
+@media (max-width: 768px) {
+    .floating-sidebar {
+        left: 1rem !important;
+        top: 50% !important;
+        transform: translateY(-50%) !important;
+    }
+    
+    .floating-sidebar nav {
+        padding: 0.5rem !important;
+    }
+    
+    .floating-sidebar .group {
+        padding: 0.75rem !important;
+    }
+    
+    .floating-sidebar svg {
+        width: 1.25rem !important;
+        height: 1.25rem !important;
+    }
+}
+
+/* Efecto de pulso para el botón de menú móvil */
+@keyframes pulse-gold {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(212, 175, 55, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 0 8px rgba(212, 175, 55, 0);
+    }
+}
+
+.pulse-gold {
+    animation: pulse-gold 2s infinite;
+}
+
+/* Efecto de brillo dorado en hover */
+.floating-sidebar .group:hover {
+    box-shadow: 0 0 20px rgba(212, 175, 55, 0.2);
+    border-color: rgba(212, 175, 55, 0.3) !important;
+}
+
+/* Transición suave para el tooltip */
+.floating-sidebar [data-tooltip] {
+    position: relative;
+}
+
+.floating-sidebar [data-tooltip]:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    left: 100%;
+    top: 50%;
+    transform: translateY(-50%);
+    margin-left: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    background: #1a1a1a;
+    color: #d4af37;
+    font-size: 0.75rem;
+    border-radius: 0.25rem;
+    white-space: nowrap;
+    z-index: 1000;
+    border: 1px solid rgba(212, 175, 55, 0.3);
+}

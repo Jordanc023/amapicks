@@ -7,9 +7,8 @@ import useAdminData from '../hooks/useAdminData';
 import EquiposTab from '../components/admin/EquiposTab';
 import JugadoresTab from '../components/admin/JugadoresTab';
 import AuditoriaTab from '../components/admin/AuditoriaTab';
-import LigaTab from '../components/admin/LigaTab';
 import SistemaTab from '../components/admin/SistemaTab';
-import LigasManagerTab from '../components/admin/LigasManagerTab';
+import CompeticionTab from '../components/admin/CompeticionTab';
 
 // External Modals
 import EditStatsModal from '../components/admin/EditStatsModal';
@@ -39,8 +38,7 @@ const Admin = () => {
         walkoverForm,
         setWalkoverForm,
         estadoLiga,
-        calendarioForm,
-        setCalendarioForm,
+        partidosTodos,
         systemStatus,
         anuncioForm,
         setAnuncioForm,
@@ -84,7 +82,6 @@ const Admin = () => {
         handleRegistrarResultadoManual,
         handleRegistrarWalkover,
         handleSavePuntuacion,
-        handleGenerarCalendario,
         handleGenerarPlayoffs,
         handleRecalcularTabla,
         handleResetearTabla,
@@ -134,11 +131,10 @@ const Admin = () => {
 
     // ─── Tab definitions ─────────────────────────────────────────────
     const tabs = [
-        { key: 'ligas', label: 'Ligas', icon: Trophy },
+        { key: 'liga', label: 'Liga', icon: Trophy },
         { key: 'equipos', label: 'Equipos', icon: Shield, count: equipos.length },
         { key: 'jugadores', label: 'Jugadores', icon: Users, count: jugadores.length },
         { key: 'auditoria', label: 'Auditoría', icon: FileText },
-        { key: 'partidos', label: 'Liga', icon: Trophy },
         { key: 'sistema', label: 'Sistema', icon: Settings, gold: true },
     ];
 
@@ -187,8 +183,28 @@ const Admin = () => {
 
             {/* ═══ Tab Content ═══ */}
             <div className="max-w-7xl mx-auto px-8">
-                {activeTab === 'ligas' && (
-                    <LigasManagerTab />
+                {activeTab === 'liga' && (
+                    <CompeticionTab
+                        onCompeticionChanged={loadData}
+                        ligaTabProps={{
+                            partidosPendientes,
+                            partidosTodos,
+                            estadoLiga,
+                            saving,
+                            setIsCreatePartidoModalOpen,
+                            setIsReporteModalOpen,
+                            setSelectedPartido,
+                            setIsExpressModalOpen,
+                            setIsWalkoverModalOpen,
+                            setIsPuntosModalOpen,
+                            handleEliminarPartido,
+                            handleGenerarPlayoffs,
+                            handleRecalcularTabla,
+                            handleResetearTabla,
+                            isDangerZoneOpen,
+                            setIsDangerZoneOpen,
+                        }}
+                    />
                 )}
 
                 {activeTab === 'equipos' && (
@@ -219,30 +235,6 @@ const Admin = () => {
 
                 {activeTab === 'auditoria' && (
                     <AuditoriaTab auditoriaLogs={auditoriaLogs} />
-                )}
-
-                {activeTab === 'partidos' && (
-                    <LigaTab
-                        equipos={equipos}
-                        partidosPendientes={partidosPendientes}
-                        estadoLiga={estadoLiga}
-                        saving={saving}
-                        setIsCreatePartidoModalOpen={setIsCreatePartidoModalOpen}
-                        setIsReporteModalOpen={setIsReporteModalOpen}
-                        setSelectedPartido={setSelectedPartido}
-                        setIsExpressModalOpen={setIsExpressModalOpen}
-                        setIsWalkoverModalOpen={setIsWalkoverModalOpen}
-                        setIsPuntosModalOpen={setIsPuntosModalOpen}
-                        handleEliminarPartido={handleEliminarPartido}
-                        handleGenerarCalendario={handleGenerarCalendario}
-                        handleGenerarPlayoffs={handleGenerarPlayoffs}
-                        handleRecalcularTabla={handleRecalcularTabla}
-                        handleResetearTabla={handleResetearTabla}
-                        calendarioForm={calendarioForm}
-                        setCalendarioForm={setCalendarioForm}
-                        isDangerZoneOpen={isDangerZoneOpen}
-                        setIsDangerZoneOpen={setIsDangerZoneOpen}
-                    />
                 )}
 
                 {activeTab === 'sistema' && (
@@ -381,7 +373,16 @@ const Admin = () => {
             <div className={`fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 ${isPuntosModalOpen ? 'block' : 'hidden'}`}>
                 <div className="bg-dark-950 border border-white/10 rounded-2xl p-6 max-w-md w-full mx-4">
                     <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-lg font-medium text-white">Ajustes de Puntos</h3>
+                        <div>
+                            <h3 className="text-lg font-medium text-white">Ajustes de Puntos</h3>
+                            <p className="text-xs text-gray-500 mt-1">
+                                Liga activa:{' '}
+                                <span className="text-gold-400">{puntuacion.liga_nombre || '—'}</span>
+                                {puntuacion.liga_id ? (
+                                    <span className="text-gray-600 ml-1">({String(puntuacion.liga_id).slice(0, 8)}…)</span>
+                                ) : null}
+                            </p>
+                        </div>
                         <button onClick={() => setIsPuntosModalOpen(false)} className="text-gray-400 hover:text-white">
                             <X size={20} />
                         </button>
@@ -407,6 +408,23 @@ const Admin = () => {
                                     className="w-full bg-white/5 border border-white/10 rounded px-2 py-2 text-center text-lg font-bold text-red-400 focus:border-gold-500/50 focus:outline-none" />
                             </div>
                         </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="text-center">
+                                <label className="block text-sm font-medium text-gray-300 mb-2">W.O. a favor</label>
+                                <input type="number" min="0" value={puntuacion.walkover_gf}
+                                    onChange={(e) => setPuntuacion({ ...puntuacion, walkover_gf: parseInt(e.target.value, 10) || 0 })}
+                                    className="w-full bg-white/5 border border-white/10 rounded px-2 py-2 text-center text-lg font-bold text-white focus:border-gold-500/50 focus:outline-none" />
+                            </div>
+                            <div className="text-center">
+                                <label className="block text-sm font-medium text-gray-300 mb-2">W.O. en contra</label>
+                                <input type="number" min="0" value={puntuacion.walkover_gc}
+                                    onChange={(e) => setPuntuacion({ ...puntuacion, walkover_gc: parseInt(e.target.value, 10) || 0 })}
+                                    className="w-full bg-white/5 border border-white/10 rounded px-2 py-2 text-center text-lg font-bold text-white focus:border-gold-500/50 focus:outline-none" />
+                            </div>
+                        </div>
+                        <p className="text-[11px] text-gray-500">
+                            Se guardan en el documento de la liga activa y se copian a la configuración del servidor (bot).
+                        </p>
                         <button onClick={handleSavePuntuacion} disabled={saving === 'puntuacion'}
                             className="w-full px-4 py-3 bg-gradient-to-r from-gold-500 to-gold-600 text-black rounded-lg hover:from-gold-400 hover:to-gold-500 disabled:opacity-50 transition-all font-medium">
                             {saving === 'puntuacion' ? 'Guardando...' : '💾 Guardar y Recalcular'}

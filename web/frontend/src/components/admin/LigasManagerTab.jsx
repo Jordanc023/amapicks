@@ -10,7 +10,7 @@ import { ligaService } from '../../services/api';
  * Componente para gestionar múltiples ligas (D1, D2, etc.)
  * Permite crear, editar, asignar equipos y configurar temporadas.
  */
-const LigasManagerTab = () => {
+const LigasManagerTab = ({ onCompeticionChanged }) => {
     const [ligas, setLigas] = useState([]);
     const [loading, setLoading] = useState(true);
     const [selectedLiga, setSelectedLiga] = useState(null);
@@ -34,6 +34,8 @@ const LigasManagerTab = () => {
         puntos_victoria: 3,
         puntos_empate: 1,
         puntos_derrota: 0,
+        walkover_gf: 3,
+        walkover_gc: 0,
         playoffs_habilitados: true,
         clasificados_playoffs: 4,
         jornada_paron_copa: 11,
@@ -43,7 +45,11 @@ const LigasManagerTab = () => {
     const [fixtureForm, setFixtureForm] = useState({
         fecha_inicio: '',
         dias_entre_jornadas: 3,
-        hora_default: '20:00'
+        hora_default: '20:00',
+        playoffs_habilitados: true,
+        clasificados_playoffs: 4,
+        tipo_liga: 'estandar',
+        dias_pausa_copa: 7
     });
 
     // Cargar datos iniciales
@@ -54,23 +60,62 @@ const LigasManagerTab = () => {
     const loadData = async () => {
         try {
             setLoading(true);
+            console.log('Iniciando carga de datos de ligas...');
+            
             const [ligasRes, ligaActivaRes, equiposRes] = await Promise.all([
                 ligaService.getLigas(),
                 ligaService.getLigaActiva(),
                 ligaService.getEquipos()
             ]);
 
+            console.log('Respuestas recibidas:', { ligasRes, ligaActivaRes, equiposRes });
+            
             setLigas(ligasRes);
-            setLigaActiva(ligaActivaRes.liga_activa);
+            setLigaActiva(ligaActivaRes?.liga_activa || null);
+            
             // Filtrar equipos que no están en ninguna liga
-            const equiposLibres = equiposRes.filter(eq => !eq.liga_id);
+            const equiposLibres = equiposRes?.filter(eq => !eq.liga_id) || [];
             setEquiposDisponibles(equiposLibres);
+            
+            console.log('Datos cargados exitosamente');
         } catch (error) {
-            console.error('Error cargando ligas:', error);
-            alert('❌ Error al cargar datos de ligas');
+            console.error('Error detallado cargando ligas:', error);
+            console.error('Error response:', error.response);
+            console.error('Error message:', error.message);
+            console.error('Error stack:', error.stack);
+            
+            let mensajeError = '❌ Error al cargar datos de ligas';
+            if (error.response) {
+                mensajeError += `\nStatus: ${error.response.status}`;
+                mensajeError += `\nData: ${JSON.stringify(error.response.data)}`;
+            } else if (error.request) {
+                mensajeError += `\nNo se recibió respuesta del servidor`;
+            } else {
+                mensajeError += `\nError: ${error.message}`;
+            }
+            
+            alert(mensajeError);
         } finally {
             setLoading(false);
         }
+    };
+
+    /** Abre el modal de creación: puntos y W.O. desde la liga activa (GET /admin/puntuacion). */
+    const openCreateModal = async () => {
+        try {
+            const p = await ligaService.getPuntuacion();
+            setCreateForm((prev) => ({
+                ...prev,
+                puntos_victoria: parseInt(p.pts_victoria, 10) || 3,
+                puntos_empate: parseInt(p.pts_empate, 10) || 1,
+                puntos_derrota: parseInt(p.pts_derrota, 10) || 0,
+                walkover_gf: parseInt(p.walkover_gf, 10) || 3,
+                walkover_gc: parseInt(p.walkover_gc, 10) || 0,
+            }));
+        } catch (e) {
+            console.warn('No se pudieron cargar puntuación sugerida:', e);
+        }
+        setIsCreateModalOpen(true);
     };
 
     const handleCreateLiga = async () => {
@@ -93,12 +138,15 @@ const LigasManagerTab = () => {
                 puntos_victoria: 3,
                 puntos_empate: 1,
                 puntos_derrota: 0,
+                walkover_gf: 3,
+                walkover_gc: 0,
                 playoffs_habilitados: true,
                 clasificados_playoffs: 4,
                 jornada_paron_copa: 11,
                 color_identificacion: '#FFD700'
             });
             await loadData();
+            onCompeticionChanged?.();
         } catch (error) {
             console.error(error);
             alert(`❌ ${error.response?.data?.detail || 'Error al crear liga'}`);
@@ -117,6 +165,7 @@ const LigasManagerTab = () => {
             setIsEditModalOpen(false);
             setSelectedLiga(null);
             await loadData();
+            onCompeticionChanged?.();
         } catch (error) {
             console.error(error);
             alert(`❌ ${error.response?.data?.detail || 'Error al actualizar'}`);
@@ -135,6 +184,7 @@ const LigasManagerTab = () => {
             setIsDeleteModalOpen(false);
             setSelectedLiga(null);
             await loadData();
+            onCompeticionChanged?.();
         } catch (error) {
             console.error(error);
             alert(`❌ ${error.response?.data?.detail || 'Error al eliminar'}`);
@@ -151,6 +201,7 @@ const LigasManagerTab = () => {
             const res = await ligaService.establecerLigaActiva(ligaId);
             alert(`✅ ${res.message}`);
             await loadData();
+            onCompeticionChanged?.();
         } catch (error) {
             console.error(error);
             alert('❌ Error al cambiar liga activa');
@@ -201,6 +252,16 @@ const LigasManagerTab = () => {
         }
     };
 
+    const resetFixtureForm = () => setFixtureForm({
+        fecha_inicio: '',
+        dias_entre_jornadas: 3,
+        hora_default: '20:00',
+        playoffs_habilitados: true,
+        clasificados_playoffs: 4,
+        tipo_liga: 'estandar',
+        dias_pausa_copa: 7
+    });
+
     const handleGenerarFixture = async () => {
         if (!selectedLiga || !fixtureForm.fecha_inicio) {
             alert('⚠️ Selecciona una fecha de inicio');
@@ -212,18 +273,32 @@ const LigasManagerTab = () => {
             return;
         }
 
+        if (fixtureForm.tipo_liga === 'd1' && equiposLiga.length !== 8) {
+            alert('⚠️ El formato Liga D1 requiere exactamente 8 equipos en esta liga');
+            return;
+        }
+
+        const fmt = fixtureForm.tipo_liga === 'd1' ? 'Liga D1 (ida/vuelta + pausa copa)' : 'Todos contra todos (ida y vuelta)';
+        if (!window.confirm(
+            `¿Generar fixture para "${selectedLiga.nombre}"?\n\n• ${equiposLiga.length} equipos\n• ${fmt}\n• Playoffs: ${fixtureForm.playoffs_habilitados ? 'Sí' : 'No'}`
+        )) return;
+
         setSaving(true);
         try {
-            const res = await ligaService.generarFixtureLiga(
-                selectedLiga.id,
-                fixtureForm.fecha_inicio,
-                fixtureForm.dias_entre_jornadas,
-                fixtureForm.hora_default
-            );
+            const res = await ligaService.generarFixtureLiga(selectedLiga.id, {
+                fecha_inicio: fixtureForm.fecha_inicio,
+                dias_entre_jornadas: fixtureForm.dias_entre_jornadas,
+                hora_default: fixtureForm.hora_default,
+                playoffs_habilitados: fixtureForm.playoffs_habilitados,
+                clasificados_playoffs: fixtureForm.clasificados_playoffs,
+                tipo_liga: fixtureForm.tipo_liga,
+                dias_pausa_copa: fixtureForm.dias_pausa_copa
+            });
             alert(`✅ ${res.message}\n📊 ${res.jornadas_total} jornadas, ${res.partidos_creados} partidos`);
             setIsFixtureModalOpen(false);
-            setFixtureForm({ fecha_inicio: '', dias_entre_jornadas: 3, hora_default: '20:00' });
+            resetFixtureForm();
             await loadData();
+            onCompeticionChanged?.();
         } catch (error) {
             console.error(error);
             alert(`❌ ${error.response?.data?.detail || 'Error al generar fixture'}`);
@@ -257,6 +332,8 @@ const LigasManagerTab = () => {
             puntos_victoria: liga.puntos_victoria,
             puntos_empate: liga.puntos_empate,
             puntos_derrota: liga.puntos_derrota,
+            walkover_gf: liga.walkover_gf ?? 3,
+            walkover_gc: liga.walkover_gc ?? 0,
             playoffs_habilitados: liga.playoffs_habilitados,
             clasificados_playoffs: liga.clasificados_playoffs,
             jornada_paron_copa: liga.jornada_paron_copa,
@@ -294,10 +371,13 @@ const LigasManagerTab = () => {
             <div className="flex justify-between items-center pb-6 border-b border-white/10">
                 <div>
                     <h2 className="text-3xl font-light text-white">Gestión de Ligas</h2>
-                    <p className="text-gray-500 mt-1">Crear y administrar múltiples divisiones (D1, D2, etc.)</p>
+                    <p className="text-gray-500 mt-1 max-w-2xl">
+                        Cada liga guarda puntos y goles de W.O. La liga activa del sistema es la que usa el panel inferior (fixture, resultados y recálculo).
+                        Al crear una liga nueva se sugieren los valores de la liga activa actual (o del servidor si no hay ninguna).
+                    </p>
                 </div>
                 <button
-                    onClick={() => setIsCreateModalOpen(true)}
+                    onClick={openCreateModal}
                     className="px-4 py-2 bg-gold-500 text-black rounded-lg hover:bg-gold-400 transition-all font-medium flex items-center gap-2"
                 >
                     <Plus size={18} />
@@ -519,7 +599,10 @@ const LigasManagerTab = () => {
                             </div>
 
                             <div className="border-t border-white/10 pt-4">
-                                <h4 className="text-sm font-medium text-white mb-3">Sistema de Puntos</h4>
+                                <h4 className="text-sm font-medium text-white mb-1">Sistema de Puntos (de esta liga)</h4>
+                                <p className="text-[11px] text-gray-500 mb-3">
+                                    Se guardan en esta liga: los usa la clasificación web y el panel de control (W.O., recálculo). Los valores iniciales vienen de la liga activa.
+                                </p>
                                 <div className="grid grid-cols-3 gap-4">
                                     <div>
                                         <label className="text-xs text-gray-500 block mb-1">Victoria</label>
@@ -546,6 +629,28 @@ const LigasManagerTab = () => {
                                             value={createForm.puntos_derrota}
                                             onChange={(e) => setCreateForm({ ...createForm, puntos_derrota: parseInt(e.target.value) || 0 })}
                                             className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-red-400 text-center font-bold focus:border-gold-500/50 focus:outline-none"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4 mt-4">
+                                    <div>
+                                        <label className="text-xs text-gray-500 block mb-1">Goles W.O. a favor</label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            value={createForm.walkover_gf}
+                                            onChange={(e) => setCreateForm({ ...createForm, walkover_gf: parseInt(e.target.value, 10) || 0 })}
+                                            className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-white text-center focus:border-gold-500/50 focus:outline-none"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs text-gray-500 block mb-1">Goles W.O. en contra</label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            value={createForm.walkover_gc}
+                                            onChange={(e) => setCreateForm({ ...createForm, walkover_gc: parseInt(e.target.value, 10) || 0 })}
+                                            className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-white text-center focus:border-gold-500/50 focus:outline-none"
                                         />
                                     </div>
                                 </div>
@@ -649,7 +754,7 @@ const LigasManagerTab = () => {
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-3 gap-4">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                                 <div>
                                     <label className="text-sm text-gray-400 block mb-1">Máx. Equipos</label>
                                     <input
@@ -662,7 +767,18 @@ const LigasManagerTab = () => {
                                     />
                                 </div>
                                 <div>
-                                    <label className="text-sm text-gray-400 block mb-1">Victoria</label>
+                                    <label className="text-sm text-gray-400 block mb-1">Jornada Parón</label>
+                                    <input
+                                        type="number"
+                                        value={createForm.jornada_paron_copa}
+                                        onChange={(e) => setCreateForm({ ...createForm, jornada_paron_copa: parseInt(e.target.value) || 11 })}
+                                        className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-white focus:border-gold-500/50 focus:outline-none"
+                                    />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-3 gap-3">
+                                <div>
+                                    <label className="text-xs text-gray-500 block mb-1">Pts. Victoria</label>
                                     <input
                                         type="number"
                                         value={createForm.puntos_victoria}
@@ -671,12 +787,43 @@ const LigasManagerTab = () => {
                                     />
                                 </div>
                                 <div>
-                                    <label className="text-sm text-gray-400 block mb-1">Jornada Parón</label>
+                                    <label className="text-xs text-gray-500 block mb-1">Pts. Empate</label>
                                     <input
                                         type="number"
-                                        value={createForm.jornada_paron_copa}
-                                        onChange={(e) => setCreateForm({ ...createForm, jornada_paron_copa: parseInt(e.target.value) || 11 })}
-                                        className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-white focus:border-gold-500/50 focus:outline-none"
+                                        value={createForm.puntos_empate}
+                                        onChange={(e) => setCreateForm({ ...createForm, puntos_empate: parseInt(e.target.value) || 1 })}
+                                        className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-yellow-400 text-center font-bold focus:border-gold-500/50 focus:outline-none"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-xs text-gray-500 block mb-1">Pts. Derrota</label>
+                                    <input
+                                        type="number"
+                                        value={createForm.puntos_derrota}
+                                        onChange={(e) => setCreateForm({ ...createForm, puntos_derrota: parseInt(e.target.value) || 0 })}
+                                        className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-red-400 text-center font-bold focus:border-gold-500/50 focus:outline-none"
+                                    />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="text-xs text-gray-500 block mb-1">Goles W.O. a favor</label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        value={createForm.walkover_gf}
+                                        onChange={(e) => setCreateForm({ ...createForm, walkover_gf: parseInt(e.target.value, 10) || 0 })}
+                                        className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-white text-center focus:border-gold-500/50 focus:outline-none"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-xs text-gray-500 block mb-1">Goles W.O. en contra</label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        value={createForm.walkover_gc}
+                                        onChange={(e) => setCreateForm({ ...createForm, walkover_gc: parseInt(e.target.value, 10) || 0 })}
+                                        className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-white text-center focus:border-gold-500/50 focus:outline-none"
                                     />
                                 </div>
                             </div>
@@ -925,10 +1072,10 @@ const LigasManagerTab = () => {
             {/* ==================== MODAL: Generar Fixture ==================== */}
             {isFixtureModalOpen && selectedLiga && (
                 <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-dark-950 border border-white/10 rounded-2xl max-w-md w-full p-6">
+                    <div className="bg-dark-950 border border-white/10 rounded-2xl max-w-lg w-full p-6">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-xl font-medium text-white">Generar Fixture</h3>
-                            <button onClick={() => setIsFixtureModalOpen(false)} className="text-gray-400 hover:text-white">
+                            <button onClick={() => { setIsFixtureModalOpen(false); resetFixtureForm(); }} className="text-gray-400 hover:text-white">
                                 <X size={20} />
                             </button>
                         </div>
@@ -950,11 +1097,17 @@ const LigasManagerTab = () => {
                                 <div className="bg-gold-500/10 border border-gold-500/20 rounded-lg p-4 mb-6">
                                     <p className="text-gold-400 text-sm font-medium mb-2">Resumen</p>
                                     <p className="text-white text-sm">{equiposLiga.length} equipos</p>
-                                    <p className="text-gray-400 text-sm">{(equiposLiga.length - 1) * 2} jornadas totales (ida y vuelta)</p>
-                                    <p className="text-gray-400 text-sm">{(equiposLiga.length - 1) * equiposLiga.length} partidos</p>
+                                    <p className="text-gray-400 text-sm">
+                                        {fixtureForm.tipo_liga === 'd1'
+                                            ? '14 jornadas (ida + vuelta) · requiere 8 equipos'
+                                            : `${(equiposLiga.length - 1) * 2} jornadas (ida y vuelta)`}
+                                    </p>
+                                    <p className="text-gray-400 text-xs mt-1">
+                                        Unificado con el antiguo asistente de temporada: mismo calendario, por liga.
+                                    </p>
                                 </div>
 
-                                <div className="space-y-4 mb-6">
+                                <div className="space-y-4 mb-6 max-h-[55vh] overflow-y-auto pr-1">
                                     <div>
                                         <label className="text-sm text-gray-400 block mb-1">Fecha de Inicio *</label>
                                         <input
@@ -986,11 +1139,58 @@ const LigasManagerTab = () => {
                                             />
                                         </div>
                                     </div>
+                                    <div>
+                                        <label className="text-sm text-gray-400 block mb-1">Tipo de calendario</label>
+                                        <select
+                                            value={fixtureForm.tipo_liga}
+                                            onChange={(e) => setFixtureForm({ ...fixtureForm, tipo_liga: e.target.value })}
+                                            className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-white focus:border-gold-500/50 focus:outline-none"
+                                        >
+                                            <option value="estandar">Todos contra todos (ida y vuelta)</option>
+                                            <option value="d1">Liga D1 (8 equipos, ida/vuelta + pausa copa)</option>
+                                        </select>
+                                    </div>
+                                    {fixtureForm.tipo_liga === 'd1' && (
+                                        <div>
+                                            <label className="text-sm text-gray-400 block mb-1">Días extra pausa copa (tras jornada 7)</label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                value={fixtureForm.dias_pausa_copa}
+                                                onChange={(e) => setFixtureForm({ ...fixtureForm, dias_pausa_copa: parseInt(e.target.value) || 0 })}
+                                                className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-white focus:border-gold-500/50 focus:outline-none"
+                                            />
+                                        </div>
+                                    )}
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="text-sm text-gray-400 block mb-1">Clasificados playoffs</label>
+                                            <input
+                                                type="number"
+                                                min="2"
+                                                max="16"
+                                                value={fixtureForm.clasificados_playoffs}
+                                                onChange={(e) => setFixtureForm({ ...fixtureForm, clasificados_playoffs: parseInt(e.target.value) || 4 })}
+                                                className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-white focus:border-gold-500/50 focus:outline-none"
+                                            />
+                                        </div>
+                                        <div className="flex items-end pb-2">
+                                            <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={fixtureForm.playoffs_habilitados}
+                                                    onChange={(e) => setFixtureForm({ ...fixtureForm, playoffs_habilitados: e.target.checked })}
+                                                    className="rounded border-white/20"
+                                                />
+                                                Playoffs habilitados
+                                            </label>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div className="flex justify-end gap-3">
                                     <button
-                                        onClick={() => setIsFixtureModalOpen(false)}
+                                        onClick={() => { setIsFixtureModalOpen(false); resetFixtureForm(); }}
                                         className="px-4 py-2 text-gray-400 hover:text-white transition-all"
                                     >
                                         Cancelar

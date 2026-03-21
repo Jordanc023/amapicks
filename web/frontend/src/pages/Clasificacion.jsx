@@ -29,16 +29,20 @@ const Clasificacion = () => {
     // Cargar clasificación cuando cambia la liga seleccionada
     useEffect(() => {
         const loadClasificacion = async () => {
-            if (!ligaSeleccionada) return;
-            
+            if (!ligaSeleccionada) {
+                setLoading(false);
+                return;
+            }
+
             setLoading(true);
             try {
                 const data = await ligaService.getClasificacion(ligaSeleccionada);
-                setTabla(data.tabla || []);
-                setLigaInfo(data.liga);
+                setTabla(Array.isArray(data.tabla) ? data.tabla : []);
+                setLigaInfo(data.liga ?? null);
             } catch (error) {
                 console.error("Error cargando clasificación:", error);
                 setTabla([]);
+                setLigaInfo(null);
             } finally {
                 setLoading(false);
             }

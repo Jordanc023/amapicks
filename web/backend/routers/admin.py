@@ -6,11 +6,12 @@ from pydantic import BaseModel
 from routers.auth import require_admin
 from datetime import datetime
 
-router = APIRouter()
+from services.liga_activa_service import (
+    obtener_puntuacion_operativa,
+    actualizar_puntuacion_liga_activa,
+)
 
-# Walkover defaults (matching bot config)
-WALKOVER_GF = 3
-WALKOVER_GC = 0
+router = APIRouter()
 
 # --- Models ---
 class UpdateTeamBudget(BaseModel):
@@ -45,6 +46,8 @@ class UpdatePuntuacion(BaseModel):
     pts_victoria: int
     pts_empate: int
     pts_derrota: int
+    walkover_gf: int = 3
+    walkover_gc: int = 0
 
 # --- Liga Automation Models ---
 class LigaConfig(BaseModel):
@@ -79,17 +82,14 @@ class AnnouncementData(BaseModel):
     color: str = "#e74c3c" # Hex format
     canal_destino: str = "anuncios" # fallback channel name
 
+from typing import Optional
+
 class SystemConfigUpdate(BaseModel):
     limite_plantilla: int
-    pts_victoria: int
-    pts_empate: int
-    pts_derrota: int
-    walkover_gf: int
-    walkover_gc: int
-    canal_ofertas_id: str
-    canal_fichajes: str
-    rol_dt: str
-    rol_agente_libre: str
+    canal_ofertas_id: Optional[str] = None
+    canal_fichajes: Optional[str] = None
+    rol_dt: Optional[str] = None
+    rol_agente_libre: Optional[str] = None
     mercado_abierto: bool
 
 class NukeConfirm(BaseModel):
@@ -175,15 +175,6 @@ async def get_auditoria(limit: int = 50, admin_user: dict = Depends(require_admi
 # CLASIFICACIÓN — Resultado, Walkover, Puntuación
 # ============================================
 
-async def _get_puntuacion(config_col):
-    """Helper: lee puntuación configurable del server_config."""
-    cfg = await config_col.find_one({})
-    return {
-        "pts_victoria": cfg.get("pts_victoria", 3) if cfg else 3,
-        "pts_empate": cfg.get("pts_empate", 1) if cfg else 1,
-        "pts_derrota": cfg.get("pts_derrota", 0) if cfg else 0,
-    }
-
 async def _actualizar_tabla(tabla_col, guild_id, eq_local, eq_visitante, gl, gv, punt):
     """Helper: actualiza tabla_posiciones con puntuación configurable."""
     if gl > gv:
@@ -212,37 +203,46 @@ async def _actualizar_tabla(tabla_col, guild_id, eq_local, eq_visitante, gl, gv,
 
 @router.get("/puntuacion")
 async def get_puntuacion(admin_user: dict = Depends(require_admin)):
-    """Obtiene la configuración de puntuación actual."""
-    config_col = get_collection("server_config")
-    punt = await _get_puntuacion(config_col)
-    return punt
+    """Puntuación y W.O. de la liga activa (unificado con documento `ligas` + espejo server_config)."""
+    return await obtener_puntuacion_operativa()
 
 @router.patch("/puntuacion")
 async def update_puntuacion(data: UpdatePuntuacion, admin_user: dict = Depends(require_admin)):
-    """Actualiza la puntuación y recalcula toda la tabla."""
+    """Actualiza puntuación y goles W.O. en la liga activa, espeja en server_config y recalcula tabla."""
     if data.pts_victoria < 0 or data.pts_empate < 0 or data.pts_derrota < 0:
         raise HTTPException(status_code=400, detail="Los puntos no pueden ser negativos")
+    if data.walkover_gf < 0 or data.walkover_gc < 0:
+        raise HTTPException(status_code=400, detail="Los goles de W.O. no pueden ser negativos")
 
+    liga_id, ok_liga = await actualizar_puntuacion_liga_activa(
+        data.pts_victoria,
+        data.pts_empate,
+        data.pts_derrota,
+        data.walkover_gf,
+        data.walkover_gc,
+    )
     config_col = get_collection("server_config")
-    # Upsert en server_config
-    await config_col.update_one(
-        {},
-        {"$set": {
+    await config_col.update_one({}, {"$set": {"updated_at": datetime.utcnow()}})
+
+    equipos_recalculados = await _recalcular_tabla_completa(data.pts_victoria, data.pts_empate, data.pts_derrota)
+
+    msg = "Puntuación actualizada y tabla recalculada"
+    if not liga_id:
+        msg += " (sin liga activa: solo server_config)"
+    elif not ok_liga:
+        msg += " (liga activa no encontrada en BD: solo server_config)"
+
+    return {
+        "message": msg,
+        "puntuacion": {
             "pts_victoria": data.pts_victoria,
             "pts_empate": data.pts_empate,
             "pts_derrota": data.pts_derrota,
-            "updated_at": datetime.utcnow()
-        }},
-        upsert=True
-    )
-
-    # Recalcular tabla completa
-    equipos_recalculados = await _recalcular_tabla_completa(data.pts_victoria, data.pts_empate, data.pts_derrota)
-
-    return {
-        "message": "Puntuación actualizada y tabla recalculada",
-        "puntuacion": {"pts_victoria": data.pts_victoria, "pts_empate": data.pts_empate, "pts_derrota": data.pts_derrota},
-        "equipos_recalculados": equipos_recalculados
+            "walkover_gf": data.walkover_gf,
+            "walkover_gc": data.walkover_gc,
+        },
+        "liga_id": liga_id,
+        "equipos_recalculados": equipos_recalculados,
     }
 
 async def _recalcular_tabla_completa(pts_v, pts_e, pts_d):
@@ -326,13 +326,12 @@ async def registrar_resultado(data: RegistrarResultado, admin_user: dict = Depen
 
     partidos_col = get_collection("partidos")
     tabla_col = get_collection("tabla_posiciones")
-    config_col = get_collection("server_config")
-    punt = await _get_puntuacion(config_col)
+    op = await obtener_puntuacion_operativa()
+    punt = {k: op[k] for k in ("pts_victoria", "pts_empate", "pts_derrota")}
 
-    # Usar guild_id "0" para web (sin contexto de guild específico)
     guild_id = "0"
 
-    await partidos_col.insert_one({
+    doc = {
         "guild_id": guild_id,
         "equipo_local": data.equipo_local,
         "equipo_visitante": data.equipo_visitante,
@@ -341,8 +340,12 @@ async def registrar_resultado(data: RegistrarResultado, admin_user: dict = Depen
         "estado": "jugado",
         "tipo": "normal",
         "registrado_por": admin_user.get("sub", "web_admin"),
-        "fecha_registro": datetime.utcnow()
-    })
+        "fecha_registro": datetime.utcnow(),
+    }
+    if op.get("liga_id"):
+        doc["liga_id"] = op["liga_id"]
+
+    await partidos_col.insert_one(doc)
 
     await _actualizar_tabla(tabla_col, guild_id, data.equipo_local, data.equipo_visitante, data.goles_local, data.goles_visitante, punt)
 
@@ -353,43 +356,47 @@ async def registrar_resultado(data: RegistrarResultado, admin_user: dict = Depen
 
 @router.post("/walkover")
 async def registrar_walkover(data: RegistrarWalkover, admin_user: dict = Depends(require_admin)):
-    """Registra un Walkover (W.O.) — victoria automática 3-0."""
+    """Registra un Walkover (W.O.) — marcador según Ajustes Globales (goles W.O.)."""
     if data.ganador == data.perdedor:
         raise HTTPException(status_code=400, detail="No se puede dictar W.O. contra el mismo equipo")
 
     partidos_col = get_collection("partidos")
     tabla_col = get_collection("tabla_posiciones")
-    config_col = get_collection("server_config")
-    punt = await _get_puntuacion(config_col)
+    op = await obtener_puntuacion_operativa()
+    punt = {k: op[k] for k in ("pts_victoria", "pts_empate", "pts_derrota")}
+    wgf, wgc = op["walkover_gf"], op["walkover_gc"]
 
     guild_id = "0"
 
-    await partidos_col.insert_one({
+    wdoc = {
         "guild_id": guild_id,
         "equipo_local": data.ganador,
         "equipo_visitante": data.perdedor,
-        "goles_local": WALKOVER_GF,
-        "goles_visitante": WALKOVER_GC,
+        "goles_local": wgf,
+        "goles_visitante": wgc,
         "estado": "walkover",
         "tipo": "walkover",
         "registrado_por": admin_user.get("sub", "web_admin"),
-        "fecha_registro": datetime.utcnow()
-    })
+        "fecha_registro": datetime.utcnow(),
+    }
+    if op.get("liga_id"):
+        wdoc["liga_id"] = op["liga_id"]
 
-    await _actualizar_tabla(tabla_col, guild_id, data.ganador, data.perdedor, WALKOVER_GF, WALKOVER_GC, punt)
+    await partidos_col.insert_one(wdoc)
+
+    await _actualizar_tabla(tabla_col, guild_id, data.ganador, data.perdedor, wgf, wgc, punt)
 
     return {
-        "message": f"W.O. dictado: {data.ganador} {WALKOVER_GF}-{WALKOVER_GC} {data.perdedor}",
+        "message": f"W.O. dictado: {data.ganador} {wgf}-{wgc} {data.perdedor}",
         "tipo": "walkover",
-        "marcador": f"{WALKOVER_GF}-{WALKOVER_GC}"
+        "marcador": f"{wgf}-{wgc}"
     }
 
 @router.post("/recalcular_tabla")
 async def recalcular_tabla(admin_user: dict = Depends(require_admin)):
     """Recalcula toda la tabla desde el historial de partidos."""
-    config_col = get_collection("server_config")
-    punt = await _get_puntuacion(config_col)
-    equipos = await _recalcular_tabla_completa(punt["pts_victoria"], punt["pts_empate"], punt["pts_derrota"])
+    op = await obtener_puntuacion_operativa()
+    equipos = await _recalcular_tabla_completa(op["pts_victoria"], op["pts_empate"], op["pts_derrota"])
     return {"message": "Tabla recalculada", "equipos_procesados": equipos}
 
 @router.post("/resetear_tabla")
@@ -790,11 +797,6 @@ async def get_system_config(admin_user: dict = Depends(require_admin)):
     
     return {
         "limite_plantilla": server_cfg.get("limite_plantilla", LIMITE_PLANTILLA),
-        "pts_victoria": server_cfg.get("pts_victoria", 3),
-        "pts_empate": server_cfg.get("pts_empate", 1),
-        "pts_derrota": server_cfg.get("pts_derrota", 0),
-        "walkover_gf": server_cfg.get("walkover_gf", 3),
-        "walkover_gc": server_cfg.get("walkover_gc", 0),
         "canal_ofertas_id": server_cfg.get("canal_ofertas_id", str(CANAL_OFERTAS_ID)),
         "canal_fichajes": server_cfg.get("canal_fichajes", CANAL_FICHAJES),
         "rol_dt": server_cfg.get("rol_dt", ROL_DE_DT),
@@ -813,11 +815,6 @@ async def update_system_config(data: SystemConfigUpdate, admin_user: dict = Depe
         {}, 
         {"$set": {
             "limite_plantilla": data.limite_plantilla,
-            "pts_victoria": data.pts_victoria,
-            "pts_empate": data.pts_empate,
-            "pts_derrota": data.pts_derrota,
-            "walkover_gf": data.walkover_gf,
-            "walkover_gc": data.walkover_gc,
             "canal_ofertas_id": data.canal_ofertas_id,
             "canal_fichajes": data.canal_fichajes,
             "rol_dt": data.rol_dt,

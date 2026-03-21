@@ -30,8 +30,18 @@ export const AuthProvider = ({ children }) => {
     }, [token]);
 
     const login = () => {
-        // Redirigir al endpoint de login del backend
-        window.location.href = "http://20.81.152.127:8001/api/auth/login";
+        const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+        const defaultApiUrl = isLocalhost ? 'http://localhost:8000' : 'http://20.81.152.127:8001';
+        const apiUrl = import.meta.env.VITE_AUTH_API_URL || import.meta.env.VITE_API_HOST || defaultApiUrl;
+
+        console.log('Auth login:', { apiUrl, location: window.location.href });
+
+        try {
+            window.location.href = `${apiUrl}/api/auth/login`;
+        } catch (error) {
+            console.error('Error redirigiendo a login:', error);
+            alert('No se pudo iniciar sesión. Revisa la consola para más detalles.');
+        }
     };
 
     const logout = () => {

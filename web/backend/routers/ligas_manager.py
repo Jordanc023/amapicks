@@ -2,10 +2,11 @@ from fastapi import APIRouter, HTTPException, Depends
 from database import get_collection
 from typing import List, Optional
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timedelta
 from bson import ObjectId
+from .auth import require_admin
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 # ============================================================
 # MODELOS
@@ -22,6 +23,8 @@ class LigaBase(BaseModel):
     puntos_victoria: int = 3
     puntos_empate: int = 1
     puntos_derrota: int = 0
+    walkover_gf: int = 3
+    walkover_gc: int = 0
     playoffs_habilitados: bool = True
     clasificados_playoffs: int = 4
     jornada_paron_copa: int = 11  # Jornada donde se detiene la liga para copa
@@ -47,6 +50,8 @@ class LigaUpdate(BaseModel):
     puntos_victoria: Optional[int] = None
     puntos_empate: Optional[int] = None
     puntos_derrota: Optional[int] = None
+    walkover_gf: Optional[int] = None
+    walkover_gc: Optional[int] = None
     playoffs_habilitados: Optional[bool] = None
     clasificados_playoffs: Optional[int] = None
     jornada_paron_copa: Optional[int] = None
@@ -74,6 +79,17 @@ class AsignarEquipoLiga(BaseModel):
 class CambiarLigaActiva(BaseModel):
     liga_id: str
 
+
+class GenerarFixtureLigaBody(BaseModel):
+    """Misma semántica que el antiguo Asistente de Temporada, aplicada a una liga concreta."""
+    fecha_inicio: str
+    dias_entre_jornadas: int = 3
+    hora_default: str = "20:00"
+    playoffs_habilitados: bool = True
+    clasificados_playoffs: int = 4
+    tipo_liga: str = "estandar"  # "estandar" (ida+vuelta) | "d1" (8 equipos, ida+vuelta + pausa copa)
+    dias_pausa_copa: int = 7
+
 # ============================================================
 # HELPERS
 # ============================================================
@@ -92,6 +108,8 @@ def serialize_liga(liga_doc) -> dict:
         "puntos_victoria": liga_doc.get("puntos_victoria", 3),
         "puntos_empate": liga_doc.get("puntos_empate", 1),
         "puntos_derrota": liga_doc.get("puntos_derrota", 0),
+        "walkover_gf": liga_doc.get("walkover_gf", 3),
+        "walkover_gc": liga_doc.get("walkover_gc", 0),
         "playoffs_habilitados": liga_doc.get("playoffs_habilitados", True),
         "clasificados_playoffs": liga_doc.get("clasificados_playoffs", 4),
         "jornada_paron_copa": liga_doc.get("jornada_paron_copa", 11),
@@ -922,59 +940,119 @@ def _generar_fixture_round_robin_liga(equipos: List[str], liga_id: str):
     
     return fixture_ida + fixture_vuelta
 
+
+def _generar_fixture_ida_solo(equipos: List[str], liga_id: str):
+    """Una vuelta round-robin (solo ida) con metadatos para insertar partidos."""
+    n = len(equipos)
+    eq = list(equipos)
+    if n % 2 == 1:
+        eq = eq + ["BYE"]
+        n = len(eq)
+    fixture_ida = []
+    rot = eq.copy()
+    for jornada_num in range(n - 1):
+        partidos_jornada = []
+        for i in range(n // 2):
+            local, visitante = rot[i], rot[n - 1 - i]
+            if local != "BYE" and visitante != "BYE":
+                partidos_jornada.append({
+                    "equipo_local": local,
+                    "equipo_visitante": visitante,
+                    "liga_id": liga_id,
+                    "jornada": jornada_num + 1,
+                    "fase": "ida"
+                })
+        rot = [rot[0]] + rot[-1:] + rot[1:-1]
+        fixture_ida.append({
+            "jornada": jornada_num + 1,
+            "fase": "ida",
+            "partidos": partidos_jornada
+        })
+    return fixture_ida
+
+
+def _generar_fixture_d1_liga(equipos_nombres: List[str], liga_id: str):
+    """Ida + vuelta (formato D1), mismo criterio que admin.generar_calendario_liga tipo d1."""
+    fixture_ida = _generar_fixture_ida_solo(equipos_nombres, liga_id)
+    offset = len(fixture_ida)
+    fixture_vuelta = []
+    for j in fixture_ida:
+        partidos_vuelta = []
+        for p in j["partidos"]:
+            partidos_vuelta.append({
+                "equipo_local": p["equipo_visitante"],
+                "equipo_visitante": p["equipo_local"],
+                "liga_id": liga_id,
+                "jornada": j["jornada"] + offset,
+                "fase": "vuelta"
+            })
+        fixture_vuelta.append({
+            "jornada": j["jornada"] + offset,
+            "fase": "vuelta",
+            "partidos": partidos_vuelta
+        })
+    return fixture_ida + fixture_vuelta
+
+
 @router.post("/ligas/{liga_id}/generar-fixture")
-async def generar_fixture_liga(
-    liga_id: str, 
-    fecha_inicio: str,
-    dias_entre_jornadas: int = 3,
-    hora_default: str = "20:00"
-):
+async def generar_fixture_liga(liga_id: str, body: GenerarFixtureLigaBody):
     """
-    Genera el fixture completo (ida y vuelta) para una liga.
+    Genera el fixture para una liga (unificado con el antiguo Asistente de Temporada).
+    - estandar: ida y vuelta todos contra todos (cualquier nº par/impar de equipos).
+    - d1: ida y vuelta con pausa de copa tras la ida (requiere exactamente 8 equipos).
     """
     ligas_col = get_collection("ligas")
     equipos_col = get_collection("equipos")
     partidos_col = get_collection("partidos")
-    
-    # Verificar liga
+    config_liga_col = get_collection("config_liga")
+
     liga = await ligas_col.find_one({"_id": ObjectId(liga_id)})
     if not liga:
         raise HTTPException(status_code=404, detail="Liga no encontrada")
-    
-    # Obtener equipos de la liga
+
     equipos_cursor = equipos_col.find({"liga_id": liga_id})
     equipos_docs = await equipos_cursor.to_list(length=50)
-    
+
     if len(equipos_docs) < 2:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="Se necesitan al menos 2 equipos en la liga para generar fixture"
         )
-    
+
     equipos_nombres = [eq["nombre"] for eq in equipos_docs]
-    
-    # Generar fixture
-    fixture = _generar_fixture_round_robin_liga(equipos_nombres, liga_id)
-    
-    # Parse fecha inicio
+    tipo = (body.tipo_liga or "estandar").lower()
+
+    if tipo == "d1":
+        if len(equipos_nombres) != 8:
+            raise HTTPException(status_code=400, detail="La Liga D1 requiere exactamente 8 equipos en la liga")
+        fixture = _generar_fixture_d1_liga(equipos_nombres, liga_id)
+    else:
+        fixture = _generar_fixture_round_robin_liga(equipos_nombres, liga_id)
+
     try:
-        from datetime import datetime as dt
-        fecha_base = dt.strptime(fecha_inicio, "%Y-%m-%d")
-    except:
+        fecha_base = datetime.strptime(body.fecha_inicio, "%Y-%m-%d")
+    except Exception:
         raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
-    
-    # Crear partidos en BD
+
+    dias_entre = body.dias_entre_jornadas
+    hora_default = body.hora_default
     partidos_creados = 0
+
     for jornada_data in fixture:
         jornada_num = jornada_data["jornada"]
-        fecha_jornada = fecha_base + __import__('datetime').timedelta(days=(jornada_num - 1) * dias_entre_jornadas)
-        
+        dias_extra = 0
+        if tipo == "d1" and jornada_num > 7:
+            dias_extra = body.dias_pausa_copa
+        fecha_jornada = fecha_base + timedelta(
+            days=(jornada_num - 1) * dias_entre + dias_extra
+        )
+
         for partido in jornada_data["partidos"]:
             fecha_hora = datetime.combine(
-                fecha_jornada.date(), 
+                fecha_jornada.date(),
                 datetime.strptime(hora_default, "%H:%M").time()
             )
-            
+
             await partidos_col.insert_one({
                 "guild_id": "0",
                 "liga_id": liga_id,
@@ -990,8 +1068,7 @@ async def generar_fixture_liga(
                 "creado_en": datetime.utcnow()
             })
             partidos_creados += 1
-    
-    # Actualizar estado de la liga
+
     total_jornadas = len(fixture)
     await ligas_col.update_one(
         {"_id": ObjectId(liga_id)},
@@ -1003,11 +1080,37 @@ async def generar_fixture_liga(
             "jornadas_vuelta": total_jornadas // 2,
             "updated_at": datetime.utcnow(),
             "fixture_generado_en": datetime.utcnow(),
-            "fecha_inicio": fecha_inicio,
-            "partidos_generados": partidos_creados
+            "fecha_inicio": body.fecha_inicio,
+            "partidos_generados": partidos_creados,
+            "playoffs_habilitados": body.playoffs_habilitados,
+            "clasificados_playoffs": body.clasificados_playoffs,
+            "tipo_fixture": tipo
         }}
     )
-    
+
+    # Sincronizar con config usada por GET /admin/estado_liga (Centro de Liga)
+    await config_liga_col.update_one(
+        {"_id": "liga_actual"},
+        {"$set": {
+            "nombre": f"{liga.get('nombre')} — Temporada",
+            "equipos_participantes": equipos_nombres,
+            "num_equipos": len(equipos_nombres),
+            "formato": "todos_contra_todos",
+            "liga_mongodb_id": liga_id,
+            "jornadas_total": total_jornadas,
+            "dias_entre_jornadas": dias_entre,
+            "fecha_inicio": body.fecha_inicio,
+            "hora_default": hora_default,
+            "playoffs_habilitados": body.playoffs_habilitados,
+            "clasificados_playoffs": body.clasificados_playoffs,
+            "estado": "en_curso",
+            "jornada_actual": 1,
+            "actualizado_por": "ligas_manager_fixture",
+            "actualizado_en": datetime.utcnow()
+        }},
+        upsert=True
+    )
+
     return {
         "message": f"Fixture generado exitosamente para '{liga.get('nombre')}'",
         "liga_id": liga_id,
@@ -1016,7 +1119,8 @@ async def generar_fixture_liga(
         "jornadas_ida": total_jornadas // 2,
         "jornadas_vuelta": total_jornadas // 2,
         "partidos_creados": partidos_creados,
-        "fixture_preview": fixture[:2]  # Primeras 2 jornadas como preview
+        "tipo_liga": tipo,
+        "fixture_preview": fixture[:2]
     }
 
 @router.post("/ligas/{liga_id}/avanzar-jornada")

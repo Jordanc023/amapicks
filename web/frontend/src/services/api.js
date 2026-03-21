@@ -1,7 +1,9 @@
 import axios from 'axios';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+
 const api = axios.create({
-    baseURL: 'http://20.81.152.127:8001/api',
+    baseURL: API_BASE_URL,
     headers: {
         'Content-Type': 'application/json',
     },
@@ -71,8 +73,9 @@ export const ligaService = {
         return response.data;
     },
 
-    getJugadores: async (filtro) => {
-        const response = await api.get(`/mercado/jugadores?filtro=${filtro}`);
+    getJugadores: async (filtro = null) => {
+        const query = filtro ? `?filtro=${encodeURIComponent(filtro)}` : '';
+        const response = await api.get(`/mercado/jugadores${query}`);
         return response.data;
     },
 
@@ -112,6 +115,11 @@ export const ligaService = {
         return response.data;
     },
 
+    getPartidosPendientes: async () => {
+        const response = await api.get('/partidos?estado=pendiente');
+        return response.data;
+    },
+
     // --- PARTIDOS ---
     getPartidos: async (estado = null) => {
         const query = estado ? `?estado=${estado}` : '';
@@ -129,14 +137,58 @@ export const ligaService = {
         return response.data;
     },
 
+    registrarResultadoPartido: async (partidoId, golesLocal, golesVisitante, mvpId = null, rojasIds = []) => {
+        const dataReporte = {
+            goles_local: golesLocal,
+            goles_visitante: golesVisitante,
+            jugadores_local: [],
+            jugadores_visitante: [],
+            evidencia_url: null,
+            notas_admin: null,
+        };
+
+        if (mvpId) {
+            dataReporte.jugadores_local.push({
+                discord_id: mvpId,
+                goles: 0,
+                asistencias: 0,
+                es_mvp: true,
+            });
+        }
+
+        if (Array.isArray(rojasIds)) {
+            rojasIds.forEach((discordId) => {
+                dataReporte.jugadores_local.push({
+                    discord_id: discordId,
+                    goles: 0,
+                    asistencias: 0,
+                    es_mvp: false,
+                });
+            });
+        }
+
+        const response = await api.post(`/partidos/${partidoId}/directo`, dataReporte);
+        return response.data;
+    },
+
     // --- CLASIFICACIÓN (Admin) ---
     getPuntuacion: async () => {
         const response = await api.get('/admin/puntuacion');
         return response.data;
     },
 
-    updatePuntuacion: async (pts_victoria, pts_empate, pts_derrota) => {
-        const response = await api.patch('/admin/puntuacion', { pts_victoria, pts_empate, pts_derrota });
+    updatePuntuacion: async (payload) => {
+        const response = await api.patch('/admin/puntuacion', payload);
+        return response.data;
+    },
+
+    getGlobalConfig: async () => {
+        const response = await api.get('/admin/system/config');
+        return response.data;
+    },
+
+    updateGlobalConfig: async (payload) => {
+        const response = await api.post('/admin/system/config', payload);
         return response.data;
     },
 
@@ -157,20 +209,6 @@ export const ligaService = {
 
     resetearTabla: async () => {
         const response = await api.post('/admin/resetear_tabla');
-        return response.data;
-    },
-
-    // --- LIGA AUTOMATION ---
-    generarCalendarioLiga: async (diasEntreJornadas, fechaInicio, horaDefault = '20:00', playoffsHabilitados = true, clasificadosPlayoffs = 4, tipoLiga = 'estandar', diasPausaCopa = 7) => {
-        const response = await api.post('/admin/generar_calendario_liga', {
-            dias_entre_jornadas: diasEntreJornadas,
-            fecha_inicio: fechaInicio,
-            hora_default: horaDefault,
-            playoffs_habilitados: playoffsHabilitados,
-            clasificados_playoffs: clasificadosPlayoffs,
-            tipo_liga: tipoLiga,
-            dias_pausa_copa: diasPausaCopa
-        });
         return response.data;
     },
 
@@ -237,6 +275,11 @@ export const ligaService = {
         return response.data;
     },
 
+    purgeLogs: async () => {
+        const response = await api.post('/admin/system/purge-logs');
+        return response.data;
+    },
+
 // --- LIGAS MANAGER (Múltiples Ligas D1, D2, etc.) ---
 
     getLigas: async (activasOnly = false) => {
@@ -292,8 +335,12 @@ export const ligaService = {
         return response.data;
     },
 
-    generarFixtureLiga: async (ligaId, fechaInicio, diasEntreJornadas = 3, horaDefault = '20:00') => {
-        const response = await api.post(`/admin/ligas/${ligaId}/generar-fixture?fecha_inicio=${fechaInicio}&dias_entre_jornadas=${diasEntreJornadas}&hora_default=${horaDefault}`);
+    /**
+     * Genera fixture (ida/vuelta o D1). Unifica el antiguo asistente de temporada.
+     * @param {object} payload - fecha_inicio, dias_entre_jornadas, hora_default, playoffs_habilitados, clasificados_playoffs, tipo_liga, dias_pausa_copa
+     */
+    generarFixtureLiga: async (ligaId, payload) => {
+        const response = await api.post(`/admin/ligas/${ligaId}/generar-fixture`, payload);
         return response.data;
     },
 

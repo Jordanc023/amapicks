@@ -1,45 +1,87 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import {
     Calendar, Edit, Trash2, Plus, Activity, Ban, Settings,
-    ChevronDown, AlertTriangle, RotateCcw, Trophy
+    ChevronDown, AlertTriangle, RotateCcw, Trophy, LayoutList
 } from 'lucide-react';
 
 /**
- * Tab de Liga/Partidos – Calendario, asistente de temporada, partidos pendientes,
- * panel de control con acciones rápidas y herramientas avanzadas.
+ * Tab Liga — Partidos del fixture, panel de control y nuevo partido.
+ * La generación del calendario vive en Admin → Ligas (unificado).
  */
 const LigaTab = ({
-    equipos,
     partidosPendientes,
+    partidosTodos = [],
     estadoLiga,
     saving,
-    // Modals
     setIsCreatePartidoModalOpen,
     setIsReporteModalOpen,
     setSelectedPartido,
     setIsExpressModalOpen,
     setIsWalkoverModalOpen,
     setIsPuntosModalOpen,
-    // Handlers
     handleEliminarPartido,
-    handleGenerarCalendario,
     handleGenerarPlayoffs,
     handleRecalcularTabla,
     handleResetearTabla,
-    // Calendario form
-    calendarioForm,
-    setCalendarioForm,
-    // Danger zone
     isDangerZoneOpen,
     setIsDangerZoneOpen,
 }) => {
+    const [filtroFixture, setFiltroFixture] = useState('todos'); // todos | pendientes
+
+    const partidosFiltrados = useMemo(() => {
+        if (filtroFixture === 'pendientes') {
+            return partidosTodos.filter((p) => p.estado === 'pendiente' || p.estado === 'auditoria');
+        }
+        return partidosTodos;
+    }, [partidosTodos, filtroFixture]);
+
+    const partidosPorJornada = useMemo(() => {
+        const map = new Map();
+        partidosFiltrados.forEach((p) => {
+            const j = p.jornada ?? 0;
+            if (!map.has(j)) map.set(j, []);
+            map.get(j).push(p);
+        });
+        return [...map.entries()].sort((a, b) => a[0] - b[0]);
+    }, [partidosFiltrados]);
+
+    const formatFechaPartido = (p) => {
+        const raw = p.fecha_hora || p.fecha_programada;
+        if (!raw) return 'Sin fecha';
+        try {
+            const d = new Date(raw);
+            if (Number.isNaN(d.getTime())) return String(raw);
+            return d.toLocaleDateString('es', {
+                day: '2-digit',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit',
+            });
+        } catch {
+            return String(raw);
+        }
+    };
+
+    const badgeEstado = (estado) => {
+        const e = (estado || 'pendiente').toLowerCase();
+        if (e === 'finalizado' || e === 'jugado') {
+            return 'bg-green-500/10 text-green-400 border border-green-500/20';
+        }
+        if (e === 'walkover') {
+            return 'bg-orange-500/10 text-orange-400 border border-orange-500/20';
+        }
+        if (e === 'auditoria') {
+            return 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20';
+        }
+        return 'bg-blue-500/10 text-blue-400 border border-blue-500/20';
+    };
+
     return (
         <div className="space-y-6">
-            {/* Header */}
             <div className="flex justify-between items-end pb-6 border-b border-white/10">
                 <div>
                     <h2 className="text-3xl font-light text-white">Centro de Liga</h2>
-                    <p className="text-gray-500 mt-1">Gestión de partidos, calendario y resultados</p>
+                    <p className="text-gray-500 mt-1">Fixture, partidos y resultados</p>
                 </div>
                 <button
                     onClick={() => setIsCreatePartidoModalOpen(true)}
@@ -51,223 +93,141 @@ const LigaTab = ({
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Columna Principal (8/12) */}
                 <div className="lg:col-span-8 space-y-6">
+                    {/* Generar calendario: en pestaña Ligas */}
+                    <div className="bg-dark-900/40 border border-white/10 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-gold-500/15 border border-gold-500/30 flex items-center justify-center shrink-0">
+                                <LayoutList size={20} className="text-gold-400" />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-semibold text-white">Calendario / temporada</h3>
+                                <p className="text-gray-500 text-xs mt-0.5">
+                                    Genera el fixture en la sección superior de esta misma pestaña: elige la liga, asigna equipos y usa{' '}
+                                    <span className="text-gold-400 font-medium">Generar Fixture</span>.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
 
-                    {/* Asistente de Configuración (solo si no hay liga o no_iniciada) */}
-                    {(!estadoLiga || estadoLiga.estado === 'no_iniciada') && equipos.length >= 2 && (
-                        <div className="bg-gradient-to-br from-gold-500/10 to-gold-500/5 border border-gold-500/20 rounded-2xl overflow-hidden">
-                            <div className="p-5 border-b border-gold-500/10">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-xl bg-gold-500/20 border border-gold-500/30 flex items-center justify-center">
-                                        <Settings size={20} className="text-gold-400" />
-                                    </div>
-                                    <div>
-                                        <h3 className="text-lg font-medium text-gold-400">⚡ Asistente de Configuración de Temporada</h3>
-                                        <p className="text-gray-500 text-xs">Genera un calendario ALL vs ALL automáticamente</p>
-                                    </div>
+                    {/* Fixture completo */}
+                    <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl overflow-hidden">
+                        <div className="p-4 border-b border-white/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+                                    <Calendar size={16} className="text-blue-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-sm font-medium text-white">Calendario del fixture</h3>
+                                    <p className="text-gray-500 text-xs">
+                                        {partidosTodos.length} partidos de liga regular
+                                        {partidosPendientes.length > 0 ? ` · ${partidosPendientes.length} pendientes` : ''}
+                                    </p>
                                 </div>
                             </div>
-                            <div className="p-6 space-y-4">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="text-xs text-gray-400 block mb-1">Fecha de Inicio</label>
-                                        <input
-                                            type="date"
-                                            value={calendarioForm.fecha_inicio}
-                                            onChange={(e) => setCalendarioForm({ ...calendarioForm, fecha_inicio: e.target.value })}
-                                            className="w-full bg-[#161b22] border border-white/10 rounded-lg p-2.5 text-white focus:border-gold-500/50 focus:outline-none"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs text-gray-400 block mb-1">Hora por Defecto</label>
-                                        <input
-                                            type="time"
-                                            value={calendarioForm.hora_default}
-                                            onChange={(e) => setCalendarioForm({ ...calendarioForm, hora_default: e.target.value })}
-                                            className="w-full bg-[#161b22] border border-white/10 rounded-lg p-2.5 text-white focus:border-gold-500/50 focus:outline-none"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="text-xs text-gray-400 block mb-1">Días entre Jornadas</label>
-                                        <input
-                                            type="number" min="1"
-                                            value={calendarioForm.dias_entre_jornadas}
-                                            onChange={(e) => setCalendarioForm({ ...calendarioForm, dias_entre_jornadas: parseInt(e.target.value) || 1 })}
-                                            className="w-full bg-[#161b22] border border-white/10 rounded-lg p-2.5 text-white focus:border-gold-500/50 focus:outline-none"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs text-gray-400 block mb-1">Clasificados a Playoffs</label>
-                                        <input
-                                            type="number" min="2"
-                                            value={calendarioForm.clasificados_playoffs}
-                                            onChange={(e) => setCalendarioForm({ ...calendarioForm, clasificados_playoffs: parseInt(e.target.value) || 4 })}
-                                            className="w-full bg-[#161b22] border border-white/10 rounded-lg p-2.5 text-white focus:border-gold-500/50 focus:outline-none"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="text-xs text-gray-400 block mb-1">Tipo de Liga</label>
-                                        <select
-                                            value={calendarioForm.tipo_liga}
-                                            onChange={(e) => setCalendarioForm({ ...calendarioForm, tipo_liga: e.target.value })}
-                                            className="w-full bg-[#161b22] border border-white/10 rounded-lg p-2.5 text-white focus:border-gold-500/50 focus:outline-none"
-                                        >
-                                            <option value="estandar">Todos contra Todos (Normal)</option>
-                                            <option value="d1">Liga D1 (Ida/Vuelta + Copa)</option>
-                                        </select>
-                                    </div>
-                                    {calendarioForm.tipo_liga === 'd1' && (
-                                        <div>
-                                            <label className="text-xs text-gray-400 block mb-1">Días de Pausa para Copa</label>
-                                            <input
-                                                type="number" min="0"
-                                                value={calendarioForm.dias_pausa_copa}
-                                                onChange={(e) => setCalendarioForm({ ...calendarioForm, dias_pausa_copa: parseInt(e.target.value) || 0 })}
-                                                className="w-full bg-[#161b22] border border-white/10 rounded-lg p-2.5 text-white focus:border-gold-500/50 focus:outline-none"
-                                            />
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="flex items-center gap-3 bg-black/20 p-3 rounded-lg">
-                                    <label className="relative inline-flex items-center cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            className="sr-only peer"
-                                            checked={calendarioForm.playoffs_habilitados}
-                                            onChange={(e) => setCalendarioForm({ ...calendarioForm, playoffs_habilitados: e.target.checked })}
-                                        />
-                                        <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gold-500"></div>
-                                    </label>
-                                    <span className="text-sm text-gray-300">Habilitar Playoffs</span>
-                                </div>
-
+                            <div className="flex rounded-lg border border-white/10 overflow-hidden text-xs font-medium">
                                 <button
-                                    onClick={handleGenerarCalendario}
-                                    disabled={saving === 'calendario'}
-                                    className="w-full py-3 bg-gradient-to-r from-gold-500 to-gold-600 text-black rounded-lg hover:from-gold-400 hover:to-gold-500 disabled:opacity-50 transition-all font-bold text-sm shadow-lg shadow-gold-500/20"
+                                    type="button"
+                                    onClick={() => setFiltroFixture('todos')}
+                                    className={`px-3 py-2 ${filtroFixture === 'todos' ? 'bg-white text-black' : 'bg-dark-900 text-gray-400 hover:text-white'}`}
                                 >
-                                    {saving === 'calendario' ? 'Generando Calendario...' : `⚡ Generar Temporada (${equipos.length} equipos)`}
+                                    Todos
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setFiltroFixture('pendientes')}
+                                    className={`px-3 py-2 border-l border-white/10 ${filtroFixture === 'pendientes' ? 'bg-white text-black' : 'bg-dark-900 text-gray-400 hover:text-white'}`}
+                                >
+                                    Solo pendientes
                                 </button>
                             </div>
                         </div>
-                    )}
 
-                    {/* Lista de Partidos Pendientes */}
-                    {partidosPendientes.length > 0 && (
-                        <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl overflow-hidden">
-                            <div className="p-4 border-b border-white/10">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                                            <Calendar size={16} className="text-blue-400" />
+                        {partidosPorJornada.length === 0 ? (
+                            <div className="p-8 text-center">
+                                <Calendar size={40} className="text-gray-600 mx-auto mb-3" />
+                                <p className="text-gray-500">No hay partidos de liga regular</p>
+                                <p className="text-gray-600 text-sm mt-2">
+                                    Crea el fixture en la parte superior de <span className="text-gold-500">Admin → Liga</span>
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="p-3 max-h-[min(70vh,900px)] overflow-y-auto space-y-4">
+                                {partidosPorJornada.map(([jornada, lista]) => (
+                                    <div key={jornada} className="rounded-xl border border-white/5 bg-[#0d1017]/80 overflow-hidden">
+                                        <div className="px-3 py-2 bg-white/[0.03] border-b border-white/5 flex items-center justify-between">
+                                            <span className="text-gold-400 text-xs font-bold uppercase tracking-wider">
+                                                Jornada {jornada}
+                                            </span>
+                                            <span className="text-gray-500 text-xs">{lista.length} partidos</span>
                                         </div>
-                                        <div>
-                                            <h3 className="text-sm font-medium text-white">Partidos Pendientes</h3>
-                                            <p className="text-gray-500 text-xs">{partidosPendientes.length} por jugar</p>
+                                        <div className="p-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                                            {lista.map((p) => {
+                                                const pendiente = p.estado === 'pendiente' || p.estado === 'auditoria';
+                                                return (
+                                                    <div
+                                                        key={p._id}
+                                                        className="group bg-[#0d1017] border border-white/5 rounded-xl p-3 hover:border-white/15 transition-colors"
+                                                    >
+                                                        <div className="flex items-center gap-2 mb-2">
+                                                            <div className="flex-1 text-center min-w-0">
+                                                                <div className="text-white font-bold text-sm truncate">{p.equipo_local}</div>
+                                                            </div>
+                                                            <div className="flex flex-col items-center flex-shrink-0 px-1">
+                                                                <span className="text-gray-500 text-[10px] font-bold">VS</span>
+                                                            </div>
+                                                            <div className="flex-1 text-center min-w-0">
+                                                                <div className="text-white font-bold text-sm truncate">{p.equipo_visitante}</div>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex flex-wrap items-center gap-2 justify-between">
+                                                            <div className="flex items-center gap-2 text-gray-500 text-xs">
+                                                                <Calendar size={12} />
+                                                                <span>{formatFechaPartido(p)}</span>
+                                                                {p.sub_fase && (
+                                                                    <span className="text-gray-600">· {p.sub_fase}</span>
+                                                                )}
+                                                            </div>
+                                                            <span
+                                                                className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${badgeEstado(p.estado)}`}
+                                                            >
+                                                                {p.estado || 'pendiente'}
+                                                            </span>
+                                                        </div>
+                                                        {pendiente && (
+                                                            <div className="mt-2 flex gap-2 opacity-90 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setSelectedPartido(p);
+                                                                        setIsReporteModalOpen(true);
+                                                                    }}
+                                                                    className="flex-1 px-2 py-1.5 bg-green-500/90 text-black rounded-lg text-xs font-medium hover:bg-green-400"
+                                                                >
+                                                                    <Edit size={12} className="inline mr-1" />
+                                                                    Registrar
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleEliminarPartido(p._id)}
+                                                                    className="px-2 py-1.5 bg-red-500/80 text-white rounded-lg text-xs font-medium hover:bg-red-600"
+                                                                >
+                                                                    <Trash2 size={12} className="inline" />
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     </div>
-                                </div>
+                                ))}
                             </div>
-
-                            <div className="p-2 max-h-[500px] overflow-y-auto">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                    {partidosPendientes.map((p) => {
-                                        const fechaProg = p.fecha_programada
-                                            ? new Date(p.fecha_programada).toLocaleDateString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute:'2-digit' })
-                                            : 'Sin fecha';
-
-                                        return (
-                                            <div
-                                                key={p._id}
-                                                className="group bg-[#0d1017] border border-white/5 rounded-xl p-3 hover:border-white/20 transition-all cursor-pointer"
-                                            >
-                                                {/* Match Info */}
-                                                <div className="flex items-center gap-2 mb-2">
-                                                    <div className="flex-1 text-center">
-                                                        <div className="text-white font-bold text-sm truncate">{p.equipo_local}</div>
-                                                    </div>
-                                                    <div className="flex flex-col items-center flex-shrink-0">
-                                                        <span className="text-gray-500 text-xs font-bold">VS</span>
-                                                        <div className="text-gray-500 text-xs">
-                                                            {p.jornada ? `J${p.jornada}` : p.fase}
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex-1 text-center">
-                                                        <div className="text-white font-bold text-sm truncate">{p.equipo_visitante}</div>
-                                                    </div>
-                                                </div>
-
-                                                <div className="flex items-center justify-between">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="flex items-center gap-1 text-gray-500 text-xs">
-                                                            <Calendar size={12} />
-                                                            <span>{fechaProg}</span>
-                                                        </div>
-                                                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${p.fase === 'LIGA' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
-                                                            'bg-purple-500/10 text-purple-400 border border-purple-500/20'
-                                                            }`}>
-                                                            {p.fase}
-                                                        </span>
-                                                    </div>
-
-                                                    <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center gap-2">
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                setSelectedPartido(p);
-                                                                setIsReporteModalOpen(true);
-                                                            }}
-                                                            className="px-3 py-1 bg-green-500 text-black rounded-lg hover:bg-green-400 transition-all font-medium text-xs shadow-lg shadow-green-500/20"
-                                                        >
-                                                            <Edit size={12} className="inline mr-1" />
-                                                            Registrar
-                                                        </button>
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                handleEliminarPartido(p._id);
-                                                            }}
-                                                            className="px-3 py-1 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all font-medium text-xs shadow-lg shadow-red-500/20"
-                                                        >
-                                                            <Trash2 size={12} className="inline mr-1" />
-                                                            Eliminar
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Mensaje si no hay partidos */}
-                    {partidosPendientes.length === 0 && (!estadoLiga || estadoLiga.estado === 'no_iniciada') && (
-                        <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl overflow-hidden">
-                            <div className="p-8 text-center">
-                                <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mx-auto mb-4">
-                                    <Calendar size={24} className="text-gray-400" />
-                                </div>
-                                <p className="text-gray-500">No hay partidos programados</p>
-                                <p className="text-gray-600 text-sm mt-2">Usa el Asistente de Configuración para crear una temporada</p>
-                            </div>
-                        </div>
-                    )}
+                        )}
+                    </div>
                 </div>
 
-                {/* Columna de Control (4/12) */}
                 <div className="lg:col-span-4 space-y-4">
-
-                    {/* Panel de Control */}
                     <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl overflow-hidden">
                         <div className="p-4 border-b border-white/10">
                             <div className="flex items-center gap-3">
@@ -281,17 +241,24 @@ const LigaTab = ({
                             </div>
                         </div>
                         <div className="p-4 space-y-3">
-                            {/* Estado de Liga */}
                             {estadoLiga && estadoLiga.estado !== 'no_iniciada' && (
                                 <div className="bg-black/20 rounded-lg p-3">
                                     <div className="flex items-center justify-between mb-2">
                                         <span className="text-white text-sm font-medium">Temporada Activa</span>
-                                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${estadoLiga.estado === 'en_curso' ? 'bg-blue-500/10 text-blue-400' :
-                                            estadoLiga.estado === 'playoffs' ? 'bg-purple-500/10 text-purple-400' :
-                                                'bg-green-500/10 text-green-400'
-                                            }`}>
-                                            {estadoLiga.estado === 'en_curso' ? 'En Curso' :
-                                                estadoLiga.estado === 'playoffs' ? 'Playoffs' : 'Finalizada'}
+                                        <span
+                                            className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                                estadoLiga.estado === 'en_curso'
+                                                    ? 'bg-blue-500/10 text-blue-400'
+                                                    : estadoLiga.estado === 'playoffs'
+                                                      ? 'bg-purple-500/10 text-purple-400'
+                                                      : 'bg-green-500/10 text-green-400'
+                                            }`}
+                                        >
+                                            {estadoLiga.estado === 'en_curso'
+                                                ? 'En Curso'
+                                                : estadoLiga.estado === 'playoffs'
+                                                  ? 'Playoffs'
+                                                  : 'Finalizada'}
                                         </span>
                                     </div>
                                     <div className="grid grid-cols-2 gap-2 text-center">
@@ -313,7 +280,6 @@ const LigaTab = ({
                                 </div>
                             )}
 
-                            {/* Botones de Acciones Rápidas */}
                             <button
                                 onClick={() => setIsExpressModalOpen(true)}
                                 className="w-full px-4 py-3 bg-gradient-to-r from-green-500 to-green-600 text-black rounded-lg hover:from-green-400 hover:to-green-500 transition-all font-medium flex items-center justify-center gap-2 shadow-lg shadow-green-500/20"
@@ -338,7 +304,6 @@ const LigaTab = ({
                                 <span>Ajustes de Puntos</span>
                             </button>
 
-                            {/* Herramientas Avanzadas */}
                             <button
                                 onClick={() => setIsDangerZoneOpen(!isDangerZoneOpen)}
                                 className="w-full px-4 py-3 bg-white/5 border border-red-500/20 text-red-400 rounded-lg hover:bg-red-500/5 transition-all font-medium flex items-center justify-center gap-2"
@@ -348,38 +313,44 @@ const LigaTab = ({
                                 <ChevronDown size={16} className={`transition-transform ${isDangerZoneOpen ? 'rotate-180' : ''}`} />
                             </button>
 
-                            {/* Danger Zone Colapsable */}
                             {isDangerZoneOpen && (
                                 <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-3 space-y-2">
                                     <div className="flex items-start gap-2">
                                         <AlertTriangle size={14} className="text-red-400 mt-0.5" />
                                         <div>
                                             <h4 className="text-red-400 text-xs font-medium mb-1">⚠️ Precaución</h4>
-                                            <p className="text-gray-400 text-xs">
-                                                Operaciones críticas del sistema
-                                            </p>
+                                            <p className="text-gray-400 text-xs">Operaciones críticas del sistema</p>
                                         </div>
                                     </div>
 
-                                    <button onClick={handleRecalcularTabla} disabled={saving === 'recalcular'}
-                                        className="w-full p-2 bg-white/5 border border-blue-500/20 rounded hover:bg-blue-500/5 transition-all text-left group disabled:opacity-50 text-sm">
+                                    <button
+                                        onClick={handleRecalcularTabla}
+                                        disabled={saving === 'recalcular'}
+                                        className="w-full p-2 bg-white/5 border border-blue-500/20 rounded hover:bg-blue-500/5 transition-all text-left group disabled:opacity-50 text-sm"
+                                    >
                                         <div className="flex items-center gap-2">
                                             <RotateCcw size={14} className="text-blue-400" />
-                                            <span className="text-white">{saving === 'recalcular' ? 'Recalculando...' : 'Recalcular Tabla'}</span>
+                                            <span className="text-white">
+                                                {saving === 'recalcular' ? 'Recalculando...' : 'Recalcular Tabla'}
+                                            </span>
                                         </div>
                                     </button>
 
-                                    <button onClick={handleResetearTabla} disabled={saving === 'resetear'}
-                                        className="w-full p-2 bg-red-500/5 border border-red-500/20 rounded hover:bg-red-500/10 transition-all text-left group disabled:opacity-50 text-sm">
+                                    <button
+                                        onClick={handleResetearTabla}
+                                        disabled={saving === 'resetear'}
+                                        className="w-full p-2 bg-red-500/5 border border-red-500/20 rounded hover:bg-red-500/10 transition-all text-left group disabled:opacity-50 text-sm"
+                                    >
                                         <div className="flex items-center gap-2">
                                             <Trash2 size={14} className="text-red-400" />
-                                            <span className="text-white">{saving === 'resetear' ? 'Borrando...' : 'Resetear Tabla'}</span>
+                                            <span className="text-white">
+                                                {saving === 'resetear' ? 'Borrando...' : 'Resetear Tabla'}
+                                            </span>
                                         </div>
                                     </button>
                                 </div>
                             )}
 
-                            {/* Botón de Playoffs */}
                             {estadoLiga?.playoffs_listos && (
                                 <button
                                     onClick={handleGenerarPlayoffs}

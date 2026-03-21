@@ -4,33 +4,32 @@ Tabla de posiciones, últimos resultados, actividad reciente, rankings.
 """
 from fastapi import APIRouter
 from database import get_collection
+from utils.mongo_json import mongo_to_json_safe
+
+from services.clasificacion_service import obtener_tabla_clasificacion
 
 router = APIRouter()
+
+# Estados que cuentan como partido ya disputado (alineado con admin / web)
+ESTADOS_PARTIDO_JUGADO = ["jugado", "finalizado", "walkover"]
 
 
 @router.get("/estadisticas")
 async def get_estadisticas():
     """Endpoint principal que retorna todas las estadísticas de la liga."""
 
-    # 1. Tabla de Posiciones
-    tabla_col = get_collection("tabla_posiciones")
-    tabla_raw = await tabla_col.find({}, {"_id": 0}).sort([
-        ("pts", -1), ("dif", -1), ("gf", -1)
-    ]).to_list(50)
+    # 1. Tabla de posiciones: misma lógica que /clasificacion (liga activa), no solo colección tabla_posiciones
+    clasif = await obtener_tabla_clasificacion(None)
+    tabla_posiciones = clasif["tabla"]
 
     # 2. Últimos Resultados (partidos jugados)
     partidos_col = get_collection("partidos")
     ultimos_resultados = await partidos_col.find(
-        {"estado": "jugado"},
+        {"estado": {"$in": ESTADOS_PARTIDO_JUGADO}},
         {"_id": 0, "equipo_local": 1, "equipo_visitante": 1,
          "goles_local": 1, "goles_visitante": 1, "resultado": 1,
-         "fecha_resultado": 1}
-    ).sort("fecha_resultado", -1).to_list(10)
-
-    # Convertir fechas a string
-    for r in ultimos_resultados:
-        if "fecha_resultado" in r and r["fecha_resultado"]:
-            r["fecha_resultado"] = r["fecha_resultado"].isoformat()
+         "fecha_resultado": 1, "fecha_hora": 1, "estado": 1, "liga_id": 1}
+    ).sort([("fecha_resultado", -1), ("fecha_hora", -1)]).to_list(10)
 
     # 3. Partidos Pendientes
     pendientes = await partidos_col.find(
@@ -38,10 +37,6 @@ async def get_estadisticas():
         {"_id": 0, "equipo_local": 1, "equipo_visitante": 1,
          "fecha_hora": 1, "estado": 1}
     ).sort("fecha_hora", 1).to_list(5)
-
-    for p in pendientes:
-        if "fecha_hora" in p and p["fecha_hora"]:
-            p["fecha_hora"] = p["fecha_hora"].isoformat()
 
     # 4. Actividad Reciente (audit_logs)
     audit_col = get_collection("audit_logs")
@@ -52,10 +47,6 @@ async def get_estadisticas():
         ]}},
         {"_id": 0}
     ).sort("timestamp", -1).to_list(15)
-
-    for a in actividad:
-        if "timestamp" in a and a["timestamp"]:
-            a["timestamp"] = a["timestamp"].isoformat()
 
     # 5. Rankings de jugadores (los más caros)
     jugadores_col = get_collection("jugadores")
@@ -73,19 +64,26 @@ async def get_estadisticas():
          "posicion": 1, "avatar_url": 1}
     ).sort("precio", -1).to_list(100)
 
-    # Stats generales
-    total_partidos_jugados = await partidos_col.count_documents({"estado": "jugado"})
+    # Stats generales (si hay liga activa, métricas de partidos/goles acotadas a esa liga)
+    liga_scope = {}
+    li = clasif.get("liga") or {}
+    if li.get("id"):
+        liga_scope = {"liga_id": li["id"]}
+
+    total_partidos_jugados = await partidos_col.count_documents(
+        {"estado": {"$in": ESTADOS_PARTIDO_JUGADO}, **liga_scope}
+    )
     total_partidos_pendientes = await partidos_col.count_documents(
-        {"estado": {"$in": ["pendiente", "notificado"]}}
+        {"estado": {"$in": ["pendiente", "notificado", "auditoria"]}, **liga_scope}
     )
     total_jugadores = await jugadores_col.count_documents({})
     total_agentes = await agentes_col.count_documents({})
     total_fichajes = await audit_col.count_documents({"action_type": "FICHAJE"})
     total_despidos = await audit_col.count_documents({"action_type": "DESPIDO"})
 
-    # Total de goles en todos los partidos
+    # Total de goles (misma liga que la tabla si aplica)
     goles_pipeline = [
-        {"$match": {"estado": "jugado"}},
+        {"$match": {"estado": {"$in": ESTADOS_PARTIDO_JUGADO}, **liga_scope}},
         {"$group": {
             "_id": None,
             "total_goles": {"$sum": {"$add": [
@@ -116,8 +114,10 @@ async def get_estadisticas():
 
     equipos_ranking.sort(key=lambda x: x["valor_plantilla"], reverse=True)
 
-    return {
-        "tabla_posiciones": tabla_raw,
+    payload = {
+        "tabla_posiciones": tabla_posiciones,
+        "liga_activa": clasif.get("liga"),
+        "puntuacion": clasif.get("puntuacion"),
         "ultimos_resultados": ultimos_resultados,
         "partidos_pendientes": pendientes,
         "actividad_reciente": actividad,
@@ -134,3 +134,5 @@ async def get_estadisticas():
             "promedio_goles": round(total_goles / max(total_partidos_jugados, 1), 1)
         }
     }
+    # ObjectId / Decimal128 / datetime en anidados (audit details, equipos, etc.)
+    return mongo_to_json_safe(payload)

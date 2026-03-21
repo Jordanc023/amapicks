@@ -1,0 +1,45 @@
+{
+  "databases": {
+    "haxball": {
+      "collection_count": 3,
+      "collections": {
+        "verifications": 0,
+        "playerstats": 0,
+        "players": 3555
+      }
+    },
+    "liga_bot": {
+      "collection_count": 17,
+      "collections": {
+        "clubes_pendientes_creacion": 0,
+        "canales_bloqueados": 1,
+        "partidos": 12,
+        "temporadas": 2,
+        "configuracion": 1,
+        "transacciones_finacieras": 4,
+        "ligas": 1,
+        "equipos": 4,
+        "jugadores": 1,
+        "config_liga": 1,
+        "agentes_libres": 0,
+        "audit_logs": 228,
+        "ofertas_pendientes": 0,
+        "config_col": 2,
+        "server_config": 2,
+        "dt_tokens": 2,
+        "tabla_posiciones": 0
+      }
+    },
+    "sample_mflix": {
+      "collection_count": 6,
+      "collections": {
+        "theaters": 1564,
+        "comments": 41079,
+        "embedded_movies": 3483,
+        "movies": 21349,
+        "sessions": 1,
+        "users": 185
+      }
+    }
+  }
+}
