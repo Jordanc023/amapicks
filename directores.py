@@ -4,6 +4,7 @@ Comandos: /dt, /renunciar, /mi_rol
 """
 import asyncio
 import discord
+from discord import app_commands
 from discord.ui import View, Button, Modal, TextInput
 from logger import get_module_logger
 import traceback
@@ -330,7 +331,7 @@ class DirectoresCog(commands.Cog):
             )
 
             # Canal de Agentes Libres
-            canal_agentes = discord.utils.get(ctx.guild.text_channels, name=config.CANAL_AGENTES_LIBRES)
+            canal_agentes = self.bot.get_channel(config.CANAL_AGENTES_LIBRES_ID)
             if canal_agentes:
                 aviso = discord.Embed(
                     description=f"**{ctx.author.display_name}** (Ex-DT {equipo_dt}) busca nuevo proyecto.",
@@ -444,97 +445,6 @@ class DirectoresCog(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Error inesperado: {e}")
             logger.error(f"Error en inscribir_dt: {e}", exc_info=True)
-
-    @commands.hybrid_command(name="mi_rol", description="Cambiar rol entre Manager y Jugador")
-    async def mi_rol(self, ctx, modo: str = None):
-        """Cambia tu rol: manager (solo dirige) o jugador (juega también)."""
-
-        # 1. Verificar si es DT
-        es_dt = any(rol.name == config.ROL_DE_DT for rol in ctx.author.roles)
-        if not es_dt:
-            await ctx.send("❌ Este comando es exclusivo para **Directores Técnicos**.")
-            return
-
-        # 2. Identificar equipo
-        equipo_dt = None
-        for rol in ctx.author.roles:
-            if rol.name in self.bot.roles_equipos:
-                equipo_dt = rol.name
-                break
-
-        if not equipo_dt:
-            await ctx.send("❌ Tienes el rol de DT pero no tienes equipo asignado.")
-            return
-
-        # 3. Validar argumento
-        if not modo or modo.lower() not in ['manager', 'jugador']:
-            embed = discord.Embed(
-                title="⚙️ Configuración de Rol DT",
-                description="Elige cómo quieres figurar en la plantilla:",
-                color=discord.Color.blue()
-            )
-            embed.add_field(
-                name="`/mi_rol manager`",
-                value="👔 **Solo diriges.**\n• No ocupas cupo de plantilla.\n• Sigues pudiendo fichar/despedir.\n• No sales en la alineación.",
-                inline=False
-            )
-            embed.add_field(
-                name="`/mi_rol jugador`",
-                value="👟 **Diriges y Juegas.**\n• Ocupas 1 cupo (1/8).\n• Sales en la alineación con ⭐.",
-                inline=False
-            )
-            await ctx.send(embed=embed)
-            return
-
-        modo = modo.lower()
-        jugadores_col = get_collection('jugadores')
-
-        if modo == 'manager':
-            # CONVERTIR A MANAGER (async)
-            result = await jugadores_col.delete_one({'discord_id': str(ctx.author.id)})
-
-            if result.deleted_count > 0:
-                await ctx.send(f"✅ **{ctx.author.display_name}**, ahora eres solo **Manager** de {equipo_dt}.\n(Has liberado un cupo en la plantilla).")
-                await log_action(
-                    guild_id=str(ctx.guild.id),
-                    action_type=config.AuditAction.DT_ROL_CAMBIO,
-                    actor_id=str(ctx.author.id),
-                    actor_name=ctx.author.name,
-                    details={'equipo': equipo_dt, 'nuevo_rol': 'manager'}
-                )
-            else:
-                await ctx.send("⚠️ Ya estabas configurado como Manager (no estabas en la lista de jugadores).")
-
-        elif modo == 'jugador':
-            # CONVERTIR A JUGADOR (async)
-
-            # Verificar si ya está
-            existente = await jugadores_col.find_one({'discord_id': str(ctx.author.id)})
-            if existente:
-                await ctx.send("⚠️ Ya figuras como jugador en la plantilla.")
-                return
-
-            # Verificar cupos
-            cantidad = await jugadores_col.count_documents({'equipo': equipo_dt})
-            if cantidad > config.LIMITE_PLANTILLA:
-                await ctx.send(f"❌ La plantilla de **{equipo_dt}** ya tiene demasiados jugadores ({cantidad}).\nNo puedes inscribirte como jugador.")
-                return
-
-            # Insertar (async)
-            await jugadores_col.insert_one({
-                'discord_id': str(ctx.author.id),
-                'nombre': ctx.author.name,
-                'equipo': equipo_dt,
-                'es_dt': True
-            })
-            await ctx.send(f"✅ **{ctx.author.display_name}**, te has inscrito como **Jugador** de {equipo_dt}.\n(Ahora ocupas 1 cupo).")
-            await log_action(
-                guild_id=str(ctx.guild.id),
-                action_type=config.AuditAction.DT_ROL_CAMBIO,
-                actor_id=str(ctx.author.id),
-                actor_name=ctx.author.name,
-                details={'equipo': equipo_dt, 'nuevo_rol': 'jugador'}
-            )
 
     @commands.hybrid_command(name="banco", description="Revisar el estado de cuenta y fondos de tu equipo (DT).")
     async def ver_banco(self, ctx):
@@ -726,6 +636,140 @@ class DirectoresCog(commands.Cog):
                            "la imagen en el parámetro 'escudo' para que se cargue automáticamente. Así te evitas poner enlaces.*")
 
         await ctx.send(content=mensaje_tip, embed=embed, view=view, ephemeral=True)
+
+    @commands.hybrid_command(name="subdt", description="Asigna un Sub-Director Técnico a tu equipo (cuenta en la plantilla).")
+    @app_commands.describe(usuario="El jugador que será el SubDT")
+    async def asignar_subdt(self, ctx, usuario: discord.Member):
+        """Asigna un SubDT al equipo. El SubDT cuenta como parte de la plantilla."""
+        await ctx.defer()
+        
+        # 1. Validar que quien ejecuta sea DT
+        if not discord.utils.get(ctx.author.roles, name=config.ROL_DE_DT):
+            await ctx.send("❌ Solo el **Director Técnico** puede asignar un SubDT.", ephemeral=True)
+            return
+        
+        # 2. Encontrar el equipo del DT
+        equipo_nombre = None
+        for rol in ctx.author.roles:
+            if str(rol.name) in self.bot.roles_equipos or (rol.name.startswith('-') and rol.name != config.ROL_DE_DT):
+                equipo_nombre = rol.name
+                break
+        
+        if not equipo_nombre:
+            await ctx.send("⚠️ No se encontró tu equipo.", ephemeral=True)
+            return
+        
+        # 3. Verificar que el usuario sea jugador del mismo equipo
+        jugadores_col = get_collection('jugadores')
+        jugador_doc = await jugadores_col.find_one({
+            'discord_id': str(usuario.id),
+            'equipo': equipo_nombre
+        })
+        
+        if not jugador_doc:
+            await ctx.send(f"❌ **{usuario.display_name}** no es un jugador de tu equipo.", ephemeral=True)
+            return
+        
+        # 4. Verificar que no sea el DT actual
+        if jugador_doc.get('es_dt', False):
+            await ctx.send("❌ No puedes asignar al DT como SubDT.", ephemeral=True)
+            return
+        
+        # 5. Asignar rol de SubDT
+        await jugadores_col.update_one(
+            {'discord_id': str(usuario.id)},
+            {'$set': {'es_subdt': True}}
+        )
+        
+        # 6. Quitar SubDT anterior si existe
+        await jugadores_col.update_many(
+            {
+                'discord_id': {'$ne': str(usuario.id)},
+                'equipo': equipo_nombre,
+                'es_subdt': True
+            },
+            {'$unset': {'es_subdt': ''}}
+        )
+        
+        # Embed de confirmación
+        embed = discord.Embed(
+            description=f"**{usuario.display_name}** ahora es **Sub-Director Técnico** de **{equipo_nombre}**",
+            color=discord.Color.blue()
+        )
+        embed.set_author(name="🎖️ NUEVO SUB-DIRECTOR TÉCNICO", icon_url=usuario.display_avatar.url)
+        embed.add_field(name="Usuario", value=usuario.mention, inline=True)
+        embed.add_field(name="Equipo", value=equipo_nombre, inline=True)
+        embed.set_footer(text="El SubDT cuenta como parte de la plantilla")
+        
+        await ctx.send(embed=embed)
+        logger.info(f"🎖️ Nuevo SubDT: {usuario.name} -> {equipo_nombre}")
+    
+    @commands.hybrid_command(name="capitan", description="Asigna un Capitán a tu equipo (cuenta en la plantilla).")
+    @app_commands.describe(usuario="El jugador que será el Capitán")
+    async def asignar_capitan(self, ctx, usuario: discord.Member):
+        """Asigna un Capitán al equipo. El Capitán cuenta como parte de la plantilla."""
+        await ctx.defer()
+        
+        # 1. Validar que quien ejecuta sea DT
+        if not discord.utils.get(ctx.author.roles, name=config.ROL_DE_DT):
+            await ctx.send("❌ Solo el **Director Técnico** puede asignar un Capitán.", ephemeral=True)
+            return
+        
+        # 2. Encontrar el equipo del DT
+        equipo_nombre = None
+        for rol in ctx.author.roles:
+            if str(rol.name) in self.bot.roles_equipos or (rol.name.startswith('-') and rol.name != config.ROL_DE_DT):
+                equipo_nombre = rol.name
+                break
+        
+        if not equipo_nombre:
+            await ctx.send("⚠️ No se encontró tu equipo.", ephemeral=True)
+            return
+        
+        # 3. Verificar que el usuario sea jugador del mismo equipo
+        jugadores_col = get_collection('jugadores')
+        jugador_doc = await jugadores_col.find_one({
+            'discord_id': str(usuario.id),
+            'equipo': equipo_nombre
+        })
+        
+        if not jugador_doc:
+            await ctx.send(f"❌ **{usuario.display_name}** no es un jugador de tu equipo.", ephemeral=True)
+            return
+        
+        # 4. Verificar que no sea el DT actual
+        if jugador_doc.get('es_dt', False):
+            await ctx.send("❌ No puedes asignar al DT como Capitán.", ephemeral=True)
+            return
+        
+        # 5. Asignar rol de Capitán
+        await jugadores_col.update_one(
+            {'discord_id': str(usuario.id)},
+            {'$set': {'es_capitan': True}}
+        )
+        
+        # 6. Quitar Capitán anterior si existe
+        await jugadores_col.update_many(
+            {
+                'discord_id': {'$ne': str(usuario.id)},
+                'equipo': equipo_nombre,
+                'es_capitan': True
+            },
+            {'$unset': {'es_capitan': ''}}
+        )
+        
+        # Embed de confirmación
+        embed = discord.Embed(
+            description=f"**{usuario.display_name}** ahora es **Capitán** de **{equipo_nombre}**",
+            color=discord.Color.gold()
+        )
+        embed.set_author(name="⭐ NUEVO CAPITÁN", icon_url=usuario.display_avatar.url)
+        embed.add_field(name="Usuario", value=usuario.mention, inline=True)
+        embed.add_field(name="Equipo", value=equipo_nombre, inline=True)
+        embed.set_footer(text="El Capitán cuenta como parte de la plantilla")
+        
+        await ctx.send(embed=embed)
+        logger.info(f"⭐ Nuevo Capitán: {usuario.name} -> {equipo_nombre}")
 
 async def setup(bot):
     await bot.add_cog(DirectoresCog(bot))

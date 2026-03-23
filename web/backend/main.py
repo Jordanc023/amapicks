@@ -2,11 +2,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 
-# Cargar variables de entorno
-load_dotenv()
+# Cargar variables de entorno desde el .env del backend (ruta absoluta)
+load_dotenv(Path(__file__).parent / ".env")
 
 
 app = FastAPI(title="AMAPICKS API", version="1.0.0")
@@ -50,3 +51,4 @@ async def health_check():
         return {"status": "ok", "database": "connected"}
     except Exception as e:
         return {"status": "error", "database": str(e)}
+

@@ -1,8 +1,9 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).parent / ".env")
 
 MONGO_URI = os.getenv("MONGO_URI")
 DB_NAME = os.getenv("DB_NAME", "liga_bot")

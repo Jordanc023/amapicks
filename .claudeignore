@@ -1,0 +1,61 @@
+# ==========================================
+# DEPENDENCIAS (Los peores vampiros de tokens)
+# ==========================================
+node_modules/
+web/frontend/node_modules/
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# ==========================================
+# ARCHIVOS DE BLOQUEO (Gigantes y sin utilidad lógica)
+# ==========================================
+package-lock.json
+web/frontend/package-lock.json
+
+# ==========================================
+# ARCHIVOS COMPILADOS Y DE PRODUCCIÓN
+# ==========================================
+dist/
+build/
+web/frontend/dist/
+web/frontend/build/
+.vite/
+
+# ==========================================
+# REPORTE Y LOGS GENERADOS POR TUS SCRIPTS
+# ==========================================
+# Vi que tienes varios scripts que generan .txt y .json de auditoría. 
+# Claude no necesita leer los resultados viejos, solo el código que los genera.
+web/backend/check_audit_results.txt
+web/backend/deep_check_results.txt
+web/backend/db_report.json
+web/frontend/build_output.txt
+*.log
+
+# ==========================================
+# BASES DE DATOS LOCALES
+# ==========================================
+*.sqlite
+*.sqlite3
+*.db
+
+# ==========================================
+# ARCHIVOS MULTIMEDIA Y FUENTES
+# ==========================================
+# Claude no puede "leer" fuentes tipográficas ni imágenes.
+assets/fonts/*.ttf
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.ico
+
+# ==========================================
+# HISTORIAL Y ENTORNO
+# ==========================================
+.git/
+.env
+.env.*

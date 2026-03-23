@@ -16,7 +16,7 @@ from discord.ext import commands, tasks
 from discord.ui import View, Button, Select
 
 from config import (
-    AuditAction, CANAL_BACKUPS, CANAL_LOGS, BACKUP_INTERVAL_HOURS,
+    AuditAction, CANAL_AGENTES_LIBRES_ID, CANAL_LOGS_ID, BACKUP_INTERVAL_HOURS,
     DEFAULT_SERVER_CONFIG
 )
 from database import (
@@ -57,8 +57,8 @@ class AdministracionCog(commands.Cog):
             if not config.get('backup_automatico', True):
                 continue
 
-            canal_nombre = config.get('canal_backups', 'backups-bot')
-            canal = discord.utils.get(guild.text_channels, name=canal_nombre)
+            canal_id = config.get('canal_backups_id', CANAL_BACKUPS_ID)
+            canal = guild.get_channel(int(canal_id)) if canal_id else None
 
             if not canal:
                 logger.warning(f"⚠️ No se encontró canal de backups en {guild.name}")
@@ -243,8 +243,8 @@ class AdministracionCog(commands.Cog):
     async def backup_manual(self, ctx):
         """Crea un backup manual inmediato."""
         config = await get_server_config(str(ctx.guild.id))
-        canal_nombre = config.get('canal_backups', 'backups-bot')
-        canal = discord.utils.get(ctx.guild.text_channels, name=canal_nombre)
+        canal_id = config.get('canal_backups_id', CANAL_BACKUPS_ID)
+        canal = ctx.guild.get_channel(int(canal_id)) if canal_id else None
 
         if not canal:
             canal = ctx.channel
@@ -257,6 +257,21 @@ class AdministracionCog(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Error al crear backup: {e}")
             logger.error(f"Error en backup_manual: {e}", exc_info=True)
+
+    @commands.hybrid_command(name="sync", description="Sincronizar comandos de barra en el servidor actual")
+    @check_es_admin()
+    async def sync(self, ctx):
+        """Sincroniza los comandos de barra con el servidor actual."""
+        await ctx.send("🔄 Sincronizando comandos de barra...")
+        try:
+            # Sincronizar solo al servidor actual para rapidez
+            self.bot.tree.copy_global_to(guild=ctx.guild)
+            synced = await self.bot.tree.sync(guild=ctx.guild)
+            await ctx.send(f"✅ Se han sincronizado {len(synced)} comandos en este servidor.")
+            logger.info(f"✅ Sincronización manual en {ctx.guild.name}: {len(synced)} comandos.")
+        except Exception as e:
+            await ctx.send(f"❌ Error al sincronizar: {e}")
+            logger.error(f"Error en sync: {e}", exc_info=True)
 
 
 async def setup(bot):

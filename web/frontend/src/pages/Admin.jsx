@@ -74,6 +74,8 @@ const Admin = () => {
         handlePrecioJugadorChange,
         handleUpdatePresupuesto,
         handleUpdatePrecio,
+        handleUpdatePresupuestosMasivo,
+        handleUpdatePreciosMasivo,
         openEditStats,
         handleStatsSave,
         handleProgramarPartido,
@@ -214,6 +216,7 @@ const Admin = () => {
                         saving={saving}
                         handlePresupuestoChange={handlePresupuestoChange}
                         handleUpdatePresupuesto={handleUpdatePresupuesto}
+                        handleUpdatePresupuestosMasivo={handleUpdatePresupuestosMasivo}
                         formatMoney={formatMoney}
                     />
                 )}
@@ -221,12 +224,14 @@ const Admin = () => {
                 {activeTab === 'jugadores' && (
                     <JugadoresTab
                         filteredJugadores={filteredJugadores}
+                        jugadores={jugadores}
                         searchTerm={searchTerm}
                         setSearchTerm={setSearchTerm}
                         preciosJugadores={preciosJugadores}
                         saving={saving}
                         handlePrecioJugadorChange={handlePrecioJugadorChange}
                         handleUpdatePrecio={handleUpdatePrecio}
+                        handleUpdatePreciosMasivo={handleUpdatePreciosMasivo}
                         openEditStats={openEditStats}
                         formatMoney={formatMoney}
                         totalJugadores={jugadores.length}

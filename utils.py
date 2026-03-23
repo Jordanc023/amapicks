@@ -12,7 +12,7 @@ logger = get_module_logger("utils")
 
 # Default Fallbacks imported from config.py
 from config import (
-    LIMITE_PLANTILLA, CANAL_OFERTAS_ID, CANAL_FICHAJES, CANAL_AGENTES_LIBRES,
+    LIMITE_PLANTILLA, CANAL_OFERTAS_ID, CANAL_FICHAJES_ID, CANAL_AGENTES_LIBRES_ID,
     ROL_DE_DT, ROL_AGENTE_LIBRE, WALKOVER_GOLES_FAVOR, WALKOVER_GOLES_CONTRA
 )
 
@@ -40,11 +40,11 @@ class ConfigCache:
                 "pts_derrota": cfg.get("pts_derrota", 0),
                 "walkover_gf": cfg.get("walkover_gf", WALKOVER_GOLES_FAVOR),
                 "walkover_gc": cfg.get("walkover_gc", WALKOVER_GOLES_CONTRA),
-                "canal_ofertas_id": int(cfg.get("canal_ofertas_id", CANAL_OFERTAS_ID)),
-                "canal_fichajes": cfg.get("canal_fichajes", CANAL_FICHAJES),
-                "canal_agentes": cfg.get("canal_agentes", CANAL_AGENTES_LIBRES),
+                "canal_ofertas_id": int(cfg.get("canal_ofertas_id") or CANAL_OFERTAS_ID),
+                "canal_fichajes_id": int(cfg.get("canal_fichajes_id") or CANAL_FICHAJES_ID),
+                "canal_agentes_id": int(cfg.get("canal_agentes_id") or CANAL_AGENTES_LIBRES_ID),
                 "rol_dt": cfg.get("rol_dt", ROL_DE_DT),
-                "rol_agente": cfg.get("rol_agente_libre", ROL_AGENTE_LIBRE),
+                "rol_agente": cfg.get("rol_agente", ROL_AGENTE_LIBRE),
                 "mercado_abierto": m_cfg.get("valor", "true") == "true"
             }
             cls._last_update = now

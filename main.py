@@ -17,7 +17,7 @@ except RuntimeError:
 # Importar configuración centralizada
 from config import (
     TOKEN, ROL_DE_DT, ROLES_ADMIN,
-    AUTO_SYNC_INTERVAL_HOURS, CANAL_OFERTAS_ID
+    AUTO_SYNC_INTERVAL_HOURS, CANAL_LOGS_ID, CANAL_OFERTAS_ID
 )
 from database import get_collection, init_db
 from logger import log, get_module_logger
@@ -33,7 +33,7 @@ class LigaBot(commands.Bot):
         intents = discord.Intents.default()
         intents.members = True
         intents.message_content = True
-        super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
+        super().__init__(command_prefix="!", intents=intents, help_command=None)
         self.roles_equipos = []
         self.uptime_start = datetime.now()
 
@@ -50,16 +50,25 @@ class LigaBot(commands.Bot):
         for ext in extensiones:
             try:
                 await self.load_extension(ext)
-                logger.info(f"✅ Extensión '{ext}' cargada.")
+                logger.info(f" Extensión '{ext}' cargada.")
             except Exception as e:
-                logger.error(f"❌ Error al cargar extensión {ext}: {e}", exc_info=True)
+                logger.error(f" Error al cargar extensión {ext}: {e}", exc_info=True)
 
-        # Sincronizar Slash Commands
+        # Sincronizar Slash Commands (global y por cada guild)
         try:
+            # Sincronización global (tarda hasta 1h en propagarse)
             synced = await self.tree.sync()
-            logger.info(f"✅ Sincronizados {len(synced)} comandos de barra.")
+            logger.info(f" Sincronizados {len(synced)} comandos de barra globalmente.")
+            
+            # Sincronización por guild (inmediata)
+            for guild in self.guilds:
+                try:
+                    guild_synced = await self.tree.sync(guild=guild)
+                    logger.info(f" Sincronizados {len(guild_synced)} comandos en '{guild.name}'")
+                except Exception as e_guild:
+                    logger.warning(f" Error sincronizando en {guild.name}: {e_guild}")
         except Exception as e:
-            logger.error(f"❌ Error al sincronizar árbol de comandos: {e}", exc_info=True)
+            logger.error(f" Error al sincronizar árbol de comandos: {e}", exc_info=True)
 
     async def cargar_equipos(self):
         """
@@ -308,8 +317,8 @@ class LigaBot(commands.Bot):
                 import config
                 cfg = await get_bot_config()
                 config.LIMITE_PLANTILLA = cfg.get("limite_plantilla", config.LIMITE_PLANTILLA)
-                config.CANAL_FICHAJES = cfg.get("canal_fichajes", config.CANAL_FICHAJES)
-                config.CANAL_AGENTES_LIBRES = cfg.get("canal_agentes", config.CANAL_AGENTES_LIBRES)
+                config.CANAL_FICHAJES_ID = cfg.get("canal_fichajes", config.CANAL_FICHAJES_ID)
+                config.CANAL_AGENTES_LIBRES_ID = cfg.get("canal_agentes", config.CANAL_AGENTES_LIBRES_ID)
                 config.ROL_DE_DT = cfg.get("rol_dt", config.ROL_DE_DT)
                 config.ROL_AGENTE_LIBRE = cfg.get("rol_agente", config.ROL_AGENTE_LIBRE)
                 config.CANAL_OFERTAS_ID = cfg.get("canal_ofertas_id", config.CANAL_OFERTAS_ID)
@@ -328,8 +337,13 @@ class LigaBot(commands.Bot):
             if command_doc and command_doc.get('force_sync'):
                 logger.info("⚡ Comando remoto recibido: Forzando Sincronización de Slash Commands...")
                 try:
-                    synced = await self.tree.sync()
-                    logger.info(f"✅ Sincronizados {len(synced)} comandos de barra remotamente.")
+                    # Usar bot.tree si self.tree no está disponible
+                    tree = getattr(self, 'tree', getattr(bot, 'tree', None))
+                    if tree:
+                        synced = await tree.sync()
+                        logger.info(f"✅ Sincronizados {len(synced)} comandos de barra remotamente.")
+                    else:
+                        logger.error("❌ No se pudo acceder al CommandTree")
                 except Exception as sync_e:
                     logger.error(f"❌ Error al sincronizar remotamente: {sync_e}")
                 finally:

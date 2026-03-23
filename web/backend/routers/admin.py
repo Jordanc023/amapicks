@@ -21,6 +21,15 @@ class UpdatePlayerPrice(BaseModel):
     precio: int
     clausula: int
 
+class UpdatePresupuestosMasivo(BaseModel):
+    equipo_ids: List[str]
+    presupuesto: int
+
+class UpdatePreciosMasivo(BaseModel):
+    jugador_ids: List[str]
+    precio: int
+    clausula: int
+
 class UpdatePlayerStats(BaseModel):
     goles: int
     asistencias: int
@@ -120,6 +129,41 @@ async def update_team_budget(equipo_id: str, data: UpdateTeamBudget, admin_user:
         
     return {"message": "Presupuesto actualizado", "presupuesto": data.presupuesto}
 
+@router.patch("/equipos/presupuesto-masivo")
+async def update_presupuestos_masivo(data: UpdatePresupuestosMasivo, admin_user: dict = Depends(require_admin)):
+    """Actualiza el presupuesto de múltiples equipos a la vez (Admin)."""
+    if not data.equipo_ids:
+        raise HTTPException(status_code=400, detail="Debe proporcionar al menos un equipo")
+    if data.presupuesto < 0:
+        raise HTTPException(status_code=400, detail="El presupuesto no puede ser negativo")
+    
+    equipos_col = get_collection("equipos")
+    equipos_actualizados = 0
+    
+    for equipo_id in data.equipo_ids:
+        equipo = await AdminRepository.get_equipo_by_id_or_name(equipo_id)
+        if equipo:
+            presupuesto_anterior = equipo.get("presupuesto", 0)
+            dinero_movido = data.presupuesto - presupuesto_anterior
+            
+            await AdminRepository.update_equipo_presupuesto(equipo["_id"], data.presupuesto)
+            
+            await AdminRepository.log_transaccion_financiera(
+                actor=admin_user.get("name", "Admin Desconocido"),
+                actor_id=admin_user.get("sub", ""),
+                equipo_id=equipo_id,
+                equipo_nombre=equipo.get('nombre', equipo_id),
+                dinero_movido=dinero_movido,
+                nuevo_presupuesto=data.presupuesto
+            )
+            equipos_actualizados += 1
+    
+    return {
+        "message": "Presupuestos actualizados masivamente",
+        "equipos_actualizados": equipos_actualizados,
+        "presupuesto": data.presupuesto
+    }
+
 @router.patch("/jugadores/{discord_id}/economia")
 async def update_player_economy(discord_id: str, data: UpdatePlayerPrice, admin_user: dict = Depends(require_admin)):
     """Actualiza precio y cláusula de un jugador (Admin)."""
@@ -129,6 +173,29 @@ async def update_player_economy(discord_id: str, data: UpdatePlayerPrice, admin_
         raise HTTPException(status_code=404, detail="Jugador no encontrado")
         
     return {"message": "Economía de jugador actualizada", "data": {"precio": data.precio, "clausula": data.clausula}}
+
+@router.patch("/jugadores/economia-masiva")
+async def update_precios_masivo(data: UpdatePreciosMasivo, admin_user: dict = Depends(require_admin)):
+    """Actualiza precio y cláusula de múltiples jugadores a la vez (Admin)."""
+    if not data.jugador_ids:
+        raise HTTPException(status_code=400, detail="Debe proporcionar al menos un jugador")
+    if data.precio < 0 or data.clausula < 0:
+        raise HTTPException(status_code=400, detail="El precio y cláusula no pueden ser negativos")
+    
+    jugadores_col = get_collection("jugadores")
+    jugadores_actualizados = 0
+    
+    for discord_id in data.jugador_ids:
+        success = await AdminRepository.update_player_economy(discord_id, data.precio, data.clausula)
+        if success:
+            jugadores_actualizados += 1
+    
+    return {
+        "message": "Precios y cláusulas actualizados masivamente",
+        "jugadores_actualizados": jugadores_actualizados,
+        "precio": data.precio,
+        "clausula": data.clausula
+    }
 
 @router.patch("/jugadores/{discord_id}/stats")
 async def update_player_stats(discord_id: str, data: UpdatePlayerStats, admin_user: dict = Depends(require_admin)):

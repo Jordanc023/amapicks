@@ -322,9 +322,10 @@ async def cerrar_mercado():
 
 
 async def contar_jugadores_equipo(equipo: str) -> int:
-    """Cuenta los jugadores de un equipo (async)."""
+    """Cuenta los jugadores de un equipo (async). Excluye al DT principal, pero incluye SubDT y Capitan."""
     jugadores = get_collection('jugadores')
-    return await jugadores.count_documents({'equipo': equipo})
+    # Solo excluir es_dt=True (DT principal), incluir SubDT y Capitan
+    return await jugadores.count_documents({'equipo': equipo, 'es_dt': {'$ne': True}})
 
 
 # ============================================
@@ -580,17 +581,138 @@ async def actualizar_tabla_por_resultado(guild_id: str, equipo_local: str, equip
 
 async def get_tabla_posiciones(guild_id: str) -> list:
     """Obtiene la tabla de posiciones ordenada (async).
-    Criterios: 1º PTS, 2º DG, 3º GF.
+    Primero intenta calcular dinámicamente desde `partidos` usando la liga activa
+    (igual que la web), y solo si no hay datos cae al legacy `tabla_posiciones`.
     """
-    tabla_col = get_collection('tabla_posiciones')
+    from bson import ObjectId
+    from bson.errors import InvalidId
 
-    cursor = tabla_col.find({'guild_id': str(guild_id)}).sort([
-        ('pts', DESCENDING),
-        ('dif', DESCENDING),
-        ('gf', DESCENDING)
-    ])
+    # 1. Buscar la liga activa
+    liga_id = None
+    liga = None
+    config_col = get_collection('server_config')
+    config_global = await config_col.find_one({'_id': 'config_global'})
+    logger.info(f"[TABLA] config_global={config_global}")
+    if config_global and config_global.get('liga_activa_id'):
+        liga_id = str(config_global['liga_activa_id'])
+    else:
+        ligas_col = get_collection('ligas')
+        liga_fb = await ligas_col.find_one({'activa': True})
+        if liga_fb:
+            liga_id = str(liga_fb.get('_id'))
+    logger.info(f"[TABLA] liga_id={liga_id}")
 
-    return await cursor.to_list(length=50)
+    if liga_id:
+        ligas_col = get_collection('ligas')
+        try:
+            liga = await ligas_col.find_one({'_id': ObjectId(liga_id)})
+        except InvalidId:
+            liga = None
+    logger.info(f"[TABLA] liga={liga.get('nombre') if liga else None}")
+
+    # 2. Puntuación
+    if liga:
+        pts_v = liga.get('puntos_victoria', 3)
+        pts_e = liga.get('puntos_empate', 1)
+        pts_d = liga.get('puntos_derrota', 0)
+    else:
+        punt = await get_puntuacion_config(guild_id)
+        pts_v = punt['pts_victoria']
+        pts_e = punt['pts_empate']
+        pts_d = punt['pts_derrota']
+
+    # 3. Cargar equipos de la liga activa (siempre, aunque no haya resultados)
+    equipos_col = get_collection('equipos')
+    stats = {}
+    if liga_id:
+        equipos_liga = await equipos_col.find(
+            {'liga_id': liga_id}, {'_id': 0, 'nombre': 1}
+        ).to_list(100)
+        if not equipos_liga:
+            # Algunos equipos usan ObjectId como liga_id
+            try:
+                equipos_liga = await equipos_col.find(
+                    {'liga_id': ObjectId(liga_id)}, {'_id': 0, 'nombre': 1}
+                ).to_list(100)
+            except InvalidId:
+                pass
+        for eq in equipos_liga:
+            nombre = eq.get('nombre')
+            if nombre:
+                stats[nombre] = {'equipo': nombre, 'pj': 0, 'pg': 0, 'pe': 0, 'pp': 0,
+                                 'gf': 0, 'gc': 0, 'dif': 0, 'pts': 0}
+    logger.info(f"[TABLA] equipos en liga: {list(stats.keys())}")
+
+    # 4. Partidos finalizados de la liga activa
+    partidos_col = get_collection('partidos')
+    query = {'estado': {'$in': ['finalizado', 'jugado', 'walkover']}}
+    if liga_id:
+        query['liga_id'] = liga_id
+
+    partidos = await partidos_col.find(query).to_list(length=1000)
+    logger.info(f"[TABLA] {len(partidos)} partidos finalizados con liga_id")
+
+    # Si no hay resultados con liga_id, busca sin filtro de liga
+    if not partidos and liga_id:
+        partidos = await partidos_col.find(
+            {'estado': {'$in': ['finalizado', 'jugado', 'walkover']}}
+        ).to_list(length=1000)
+        logger.info(f"[TABLA] sin filtro liga → {len(partidos)} partidos")
+
+    # Si tampoco hay equipos en la liga, fallback a tabla_posiciones legacy
+    if not stats and not partidos:
+        tabla_col = get_collection('tabla_posiciones')
+        for gid in [str(guild_id), '0']:
+            cursor = tabla_col.find({'guild_id': gid}).sort([
+                ('pts', DESCENDING), ('dif', DESCENDING), ('gf', DESCENDING)
+            ])
+            resultado = await cursor.to_list(length=50)
+            if resultado:
+                return resultado
+        return []
+
+    # 5. Calcular estadísticas desde partidos
+    for p in partidos:
+        local = p.get('equipo_local')
+        visitante = p.get('equipo_visitante')
+        gl = p.get('goles_local') or 0
+        gv = p.get('goles_visitante') or 0
+
+        for equipo in (local, visitante):
+            if equipo and equipo not in stats:
+                stats[equipo] = {'equipo': equipo, 'pj': 0, 'pg': 0, 'pe': 0, 'pp': 0,
+                                 'gf': 0, 'gc': 0, 'dif': 0, 'pts': 0}
+
+        if not local or not visitante:
+            continue
+
+        stats[local]['pj'] += 1
+        stats[visitante]['pj'] += 1
+        stats[local]['gf'] += gl
+        stats[local]['gc'] += gv
+        stats[visitante]['gf'] += gv
+        stats[visitante]['gc'] += gl
+
+        if gl > gv:
+            stats[local]['pg'] += 1
+            stats[local]['pts'] += pts_v
+            stats[visitante]['pp'] += 1
+            stats[visitante]['pts'] += pts_d
+        elif gl < gv:
+            stats[visitante]['pg'] += 1
+            stats[visitante]['pts'] += pts_v
+            stats[local]['pp'] += 1
+            stats[local]['pts'] += pts_d
+        else:
+            stats[local]['pe'] += 1
+            stats[local]['pts'] += pts_e
+            stats[visitante]['pe'] += 1
+            stats[visitante]['pts'] += pts_e
+
+    for s in stats.values():
+        s['dif'] = s['gf'] - s['gc']
+
+    return sorted(stats.values(), key=lambda x: (x['pts'], x['dif'], x['gf']), reverse=True)
 
 
 async def recalcular_tabla_completa(guild_id: str) -> int:

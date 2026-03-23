@@ -265,17 +265,23 @@ async def get_mercado_status():
 
 @router.get("/mercado/jugadores")
 async def get_jugadores_mercado(filtro: str = "todos"):
-    """Obtiene jugadores para el mercado (Agentes Libres y Jugadores con equipo)."""
+    """Obtiene jugadores para el mercado (Agentes Libres y Jugadores con equipo). Excluye DTs."""
     if filtro == "todos":
-        jugadores_equipo = await get_collection("jugadores").find({}, {"_id": 0}).to_list(1000)
+        jugadores_equipo = await get_collection("jugadores").find(
+            {"es_dt": {"$ne": True}}, {"_id": 0}
+        ).to_list(1000)
         agentes_libres = await get_collection("agentes_libres").find({}, {"_id": 0}).to_list(1000)
         
         for j in agentes_libres:
             j["equipo"] = None
             
         jugadores = jugadores_equipo + agentes_libres
+    elif filtro == "con_equipo":
+        jugadores = await get_collection("jugadores").find(
+            {"es_dt": {"$ne": True}}, {"_id": 0}
+        ).to_list(1000)
     else:
-        collection_name = "jugadores" if filtro == "con_equipo" else "agentes_libres"
+        collection_name = "agentes_libres"
         jugadores = await get_collection(collection_name).find({}, {"_id": 0}).to_list(1000)
     
     # Enriquecer con avatar simulado si no tienen (para demo)

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8001/api';
 
 const api = axios.create({
     baseURL: API_BASE_URL,
@@ -97,6 +97,16 @@ export const ligaService = {
 
     updatePrecioJugador: async (discordId, precio, clausula) => {
         const response = await api.patch(`/admin/jugadores/${discordId}/economia`, { precio, clausula });
+        return response.data;
+    },
+
+    updatePresupuestosMasivo: async (equipoIds, presupuesto) => {
+        const response = await api.patch('/admin/equipos/presupuesto-masivo', { equipo_ids: equipoIds, presupuesto });
+        return response.data;
+    },
+
+    updatePreciosJugadoresMasivo: async (jugadorIds, precio, clausula) => {
+        const response = await api.patch('/admin/jugadores/economia-masiva', { jugador_ids: jugadorIds, precio, clausula });
         return response.data;
     },
 

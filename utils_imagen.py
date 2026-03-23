@@ -65,22 +65,22 @@ async def generar_imagen_plantilla(nombre_equipo, color_hex, escudo_url, dt_nomb
     # 1. Lienzo Oscuro Global (Fondo base Negro Profundo)
     img = Image.new('RGBA', (WIDTH, HEIGHT), color=(10, 10, 12, 255))
     
-    # 2. Degradado Radial Dorado Estándar para todos los clubes
+    # 2. Degradado Radial del Color del Equipo
     gradient = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
     draw_grad = ImageDraw.Draw(gradient)
     
-    # Color Dorado Brillante (RGB)
-    gold_rgb = (212, 175, 55)
+    # Usar el color del equipo para el degradado
+    team_rgb = hex_to_rgb(color_hex)
     
     center_x, center_y = WIDTH // 2, HEIGHT // 3
     max_radius = 900
     
     for r in range(max_radius, 0, -10):
-        # Curva de opacidad (Efecto brillo inmersivo dorado en el centro)
+        # Curva de opacidad (Efecto brillo inmersivo del color del equipo en el centro)
         alpha = int(((1 - (r / max_radius))**2) * 110) 
         draw_grad.ellipse(
             (center_x - r, center_y - r, center_x + r, center_y + r),
-            fill=(gold_rgb[0], gold_rgb[1], gold_rgb[2], alpha)
+            fill=(team_rgb[0], team_rgb[1], team_rgb[2], alpha)
         )
     img.alpha_composite(gradient)
     
@@ -228,212 +228,263 @@ async def generar_imagen_plantilla(nombre_equipo, color_hex, escudo_url, dt_nomb
     return output
 
 
-async def generar_tarjeta_jugador(nombre_jugador, avatar_url, equipo_nombre, color_hex, escudo_url, posicion, dorsal, goles, partidos, historial):
+async def generar_tarjeta_jugador(nombre_jugador, avatar_url, equipo_nombre, color_hex, escudo_url, posicion, dorsal, goles, partidos, historial, asistencias=0, mvps=0, precio=0):
     """
-    Genera visualmente una 'Player Card' coleccionable para el Comando Historial.
-    Historial debe ser lista de tuplas: [(fecha_str, 'FICHAJE'/'DESPIDO'/'RENUNCIA', 'Equipo'), ...]
+    Player Card minimalista rediseñada.
+    Historial: [(fecha_str, 'FICHAJE'/'DESPIDO'/'RENUNCIA', 'Equipo'), ...]
     """
-    WIDTH = 800
-    # Calcular alto dinámico en función del tamaño del historial
-    base_height = 920
-    if historial and len(historial) > 0:
-        base_height += len(historial) * 85
-    HEIGHT = base_height
-    
-    # 1. Lienzo Oscuro Global (Fondo base Negro Profundo)
-    img = Image.new('RGBA', (WIDTH, HEIGHT), color=(10, 10, 12, 255))
-    
-    # 2. Degradado Radial Dorado Estándar
-    gradient = Image.new('RGBA', (WIDTH, HEIGHT), (0, 0, 0, 0))
-    draw_grad = ImageDraw.Draw(gradient)
-    gold_rgb = (212, 175, 55)
-    
-    center_x, center_y = WIDTH // 2, 400
-    max_radius = 700
-    
-    for r in range(max_radius, 0, -10):
-        # Curva de opacidad (Efecto brillo inmersivo dorado en el centro)
-        alpha = int(((1 - (r / max_radius))**2) * 110) 
-        draw_grad.ellipse(
-            (center_x - r, center_y - r, center_x + r, center_y + r),
-            fill=(gold_rgb[0], gold_rgb[1], gold_rgb[2], alpha)
-        )
-    img.alpha_composite(gradient)
-    
-    color_rgb = hex_to_rgb(color_hex)
-    
-    # 3. Cargar Fuentes
-    try:
-        font_title = ImageFont.truetype(FONT_DEFAULT, 75)
-        font_subtitle = ImageFont.truetype(FONT_REGULAR, 32)
-        font_box = ImageFont.truetype(FONT_DEFAULT, 48)
-        font_tag = ImageFont.truetype(FONT_REGULAR, 22)
-        font_hist_date = ImageFont.truetype(FONT_DEFAULT, 18)
-        font_hist_text = ImageFont.truetype(FONT_REGULAR, 24)
-    except:
-        font_title = ImageFont.load_default()
-        font_subtitle = ImageFont.load_default()
-        font_box = ImageFont.load_default()
-        font_tag = ImageFont.load_default()
-        font_hist_date = ImageFont.load_default()
-        font_hist_text = ImageFont.load_default()
-        
-    draw = ImageDraw.Draw(img, "RGBA")
-    
-    # 4. Escudo Posterior Gigante (Opcional, si tiene)
-    if escudo_url:
-        logo = await descargar_imagen(escudo_url)
-        if logo:
-            watermark = logo.copy()
-            a = watermark.getchannel('A')
-            a = a.point(lambda i: int(i * 0.05)) # Solo 5% Opacidad
-            watermark.putalpha(a)
-            watermark.thumbnail((800, 800), Image.Resampling.LANCZOS)
-            img.alpha_composite(watermark, (WIDTH//2 - watermark.width//2, 200))
-            
-            # Escudo Cabecera Alta-Derecha
-            logo.thumbnail((120, 120), Image.Resampling.LANCZOS)
-            img.alpha_composite(logo, (WIDTH - 150, 30))
+    W = 780
+    hist_rows = len(historial) if historial else 0
+    H = 580 + hist_rows * 72
+    BG   = (11, 11, 14, 255)
+    CARD = (20, 20, 26, 255)
 
-    # 5. Avatar Circular (Corte Perfecto)
-    avatar_img = None
-    if avatar_url:
-        avatar_img = await descargar_imagen(avatar_url)
-        
+    color_rgb = hex_to_rgb(color_hex) if color_hex and color_hex != "#1a1a1a" else (212, 175, 55)
+    ACCENT = color_rgb
+    GOLD   = (212, 175, 55)
+
+    img = Image.new('RGBA', (W, H), BG)
+    draw = ImageDraw.Draw(img, 'RGBA')
+
+    # ── Barra lateral de color del equipo (izquierda)
+    draw.rectangle([0, 0, 6, H], fill=(*ACCENT, 255))
+
+    # ── Degradado sutil del color del equipo en esquina superior derecha
+    grad = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(grad)
+    for r in range(340, 0, -8):
+        a = int(((1 - r / 340) ** 2) * 55)
+        gd.ellipse((W - r, -r//2, W + r, r + r//2), fill=(*ACCENT, a))
+    img.alpha_composite(grad)
+
+    # ── Fuentes
+    try:
+        fn_big   = ImageFont.truetype(FONT_DEFAULT, 54)
+        fn_med   = ImageFont.truetype(FONT_DEFAULT, 26)
+        fn_small = ImageFont.truetype(FONT_REGULAR, 20)
+        fn_xs    = ImageFont.truetype(FONT_REGULAR, 16)
+        fn_stat  = ImageFont.truetype(FONT_DEFAULT, 38)
+    except:
+        fn_big = fn_med = fn_small = fn_xs = fn_stat = ImageFont.load_default()
+
+    # ── Helper: texto centrado en X
+    def cx(text, font, x, y, fill):
+        try:
+            tw = draw.textlength(text, font=font)
+        except:
+            tw = len(text) * 10
+        draw.text((x - tw // 2, y), text, font=font, fill=fill)
+
+    # ── Descargas asíncronas
+    logo_img   = await descargar_imagen(escudo_url) if escudo_url else None
+    avatar_img = await descargar_imagen(avatar_url)  if avatar_url  else None
+
+    # ── Marca de agua del escudo (fondo)
+    if logo_img:
+        wm = logo_img.copy()
+        a  = wm.getchannel('A')
+        a  = a.point(lambda i: int(i * 0.06))
+        wm.putalpha(a)
+        wm.thumbnail((480, 480), Image.Resampling.LANCZOS)
+        img.alpha_composite(wm, (W // 2 - wm.width // 2, 30))
+
+    # ══════════════════════════════════════════
+    # SECCIÓN SUPERIOR: avatar + info
+    # ══════════════════════════════════════════
+    PAD   = 32
+    AV    = 160   # tamaño avatar
+    av_x  = PAD + 10
+    av_y  = 36
+
+    # Anillo del equipo
+    ring = 8
+    draw.ellipse((av_x - ring, av_y - ring, av_x + AV + ring, av_y + AV + ring),
+                 fill=(*ACCENT, 255))
+    draw.ellipse((av_x - 2, av_y - 2, av_x + AV + 2, av_y + AV + 2),
+                 fill=BG)
+
     if avatar_img:
-        av_size = 280
-        avatar_img = avatar_img.resize((av_size, av_size), Image.Resampling.LANCZOS).convert("RGBA")
-        
-        # Crear máscara circular redonda perfecta
-        mask = Image.new('L', (av_size, av_size), 0)
-        draw_mask = ImageDraw.Draw(mask)
-        draw_mask.ellipse((0, 0, av_size, av_size), fill=255)
-        
-        avatar_circle = Image.new('RGBA', (av_size, av_size), (0,0,0,0))
-        avatar_circle.paste(avatar_img, (0, 0), mask)
-        
-        avatar_x = WIDTH//2 - av_size//2
-        avatar_y = 110
-        
-        # Dibujar anillo detrás (Color del Club y Borde interior)
-        ring_pad = 10
-        draw.ellipse((avatar_x - ring_pad, avatar_y - ring_pad, avatar_x + av_size + ring_pad, avatar_y + av_size + ring_pad), fill=(color_rgb[0], color_rgb[1], color_rgb[2], 255))
-        draw.ellipse((avatar_x - 3, avatar_y - 3, avatar_x + av_size + 3, avatar_y + av_size + 3), fill=(10,10,12,255))
-        
-        img.alpha_composite(avatar_circle, (avatar_x, avatar_y))
+        av = avatar_img.resize((AV, AV), Image.Resampling.LANCZOS).convert('RGBA')
+        mask = Image.new('L', (AV, AV), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, AV, AV), fill=255)
+        circle = Image.new('RGBA', (AV, AV), (0, 0, 0, 0))
+        circle.paste(av, (0, 0), mask)
+        img.alpha_composite(circle, (av_x, av_y))
 
-    # 6. Posición (Badge Alta-Izquierda)
+    # Info lateral derecha del avatar
+    tx = av_x + AV + 26
+    ty = av_y + 4
+
+    # Nombre
+    nombre_up = str(nombre_jugador).upper()
+    try:
+        nw = draw.textlength(nombre_up, font=fn_big)
+    except:
+        nw = 300
+    # Recortar si es muy largo
+    max_name_w = W - tx - PAD - 10
+    if nw > max_name_w:
+        nombre_up = nombre_up[:int(len(nombre_up) * max_name_w / nw) - 1] + '…'
+    draw.text((tx, ty), nombre_up, font=fn_big, fill=(245, 245, 245, 255))
+    ty += 62
+
+    # Equipo actual con píldora de color
+    eq_text = str(equipo_nombre).upper()
+    try:
+        eq_w = draw.textlength(eq_text, font=fn_med)
+    except:
+        eq_w = 120
+    pill_pad = 14
+    draw.rounded_rectangle(
+        [tx - 2, ty - 4, tx + eq_w + pill_pad * 2, ty + 32],
+        radius=10, fill=(*ACCENT, 200)
+    )
+    draw.text((tx + pill_pad, ty), eq_text, font=fn_med, fill=(0, 0, 0, 255))
+    ty += 52
+
+    # Posición y dorsal en línea
+    badges = []
     if posicion:
-        draw.rounded_rectangle([30, 40, 160, 100], radius=15, fill=(gold_rgb[0], gold_rgb[1], gold_rgb[2], 255))
+        badges.append(str(posicion).upper())
+    if dorsal and str(dorsal) != '??':
+        badges.append(f"#{dorsal}")
+    for badge in badges:
         try:
-            ptw = draw.textlength(str(posicion), font=font_subtitle)
+            bw = draw.textlength(badge, font=fn_small)
         except:
-            ptw = 60
-        draw.text((30 + (130 - ptw)//2, 53), str(posicion), font=font_subtitle, fill=(0,0,0,255))
-    
-    y_offset = 430
-    
-    # 7. Nombre del Jugador
-    text_nombre = str(nombre_jugador).upper()
-    try:
-        tw = draw.textlength(text_nombre, font=font_title)
-    except:
-        tw = 300
-    draw.text((WIDTH//2 - tw//2 + 3, y_offset + 3), text_nombre, font=font_title, fill=(0, 0, 0, 180))
-    draw.text((WIDTH//2 - tw//2, y_offset), text_nombre, font=font_title, fill="white")
-    y_offset += 80
-    
-    # 8. Equipo Actual Name
-    try:
-        etw = draw.textlength(str(equipo_nombre).upper(), font=font_subtitle)
-    except:
-        etw = 150
-    draw.text((WIDTH//2 - etw//2, y_offset), str(equipo_nombre).upper(), font=font_subtitle, fill=(200, 200, 200, 255))
-    y_offset += 80
-    
-    # 9. Cajas de Estadísticas (FUT Panels)
-    box_w = 210
-    box_h = 100
-    gap = 35
-    start_x = (WIDTH - (box_w * 3 + gap * 2)) // 2
-    
-    def dibujar_stat(x, y, titulo, valor):
-        draw.rounded_rectangle([x, y, x + box_w, y + box_h], radius=15, fill=(255, 255, 255, 12), outline=(255, 255, 255, 30), width=1)
-        # raya top
-        draw.rounded_rectangle([x + 30, y, x + box_w - 30, y + 4], radius=2, fill=(color_rgb[0], color_rgb[1], color_rgb[2], 255))
-        
-        # titulo
-        try:
-            ttw = draw.textlength(titulo, font=font_tag)
-        except:
-            ttw = 60
-        draw.text((x + box_w//2 - ttw//2, y + 14), titulo, font=font_tag, fill=(180, 180, 180, 255))
-        
-        # valor numerico
-        val_str = str(valor)
-        try:
-            vtw = draw.textlength(val_str, font=font_box)
-        except:
-            vtw = 40
-        draw.text((x + box_w//2 - vtw//2, y + 42), val_str, font=font_box, fill="white")
+            bw = 50
+        draw.rounded_rectangle(
+            [tx - 2, ty - 3, tx + bw + 22, ty + 26],
+            radius=8, fill=(255, 255, 255, 18), outline=(255, 255, 255, 35), width=1
+        )
+        draw.text((tx + 11, ty), badge, font=fn_small, fill=(0, 0, 0, 255))
+        tx += bw + 36
 
-    dibujar_stat(start_x, y_offset, "PARTIDOS", partidos)
-    dibujar_stat(start_x + box_w + gap, y_offset, "GOLES", goles)
-    dibujar_stat(start_x + (box_w + gap)*2, y_offset, "DORSAL", dorsal)
-    
-    y_offset += box_h + 60
-    
-    # Línea separadora
-    draw.line((100, y_offset, WIDTH - 100, y_offset), fill=(255,255,255,40), width=2)
-    y_offset += 40
-    
-    # 10. Timeline Historial
-    hist_title = "HISTORIAL DE TRANSFERENCIAS"
+    # Precio (esquina superior derecha)
+    precio_str = f"${precio:,}" if precio else "—"
     try:
-        htw = draw.textlength(hist_title, font=font_tag)
+        pw = draw.textlength(precio_str, font=fn_med)
     except:
-        htw = 200
-    draw.text((WIDTH//2 - htw//2, y_offset), hist_title, font=font_tag, fill=(gold_rgb[0], gold_rgb[1], gold_rgb[2], 255))
-    y_offset += 55
-    
-    if len(historial) == 0:
-        draw.text((WIDTH//2 - 140, y_offset + 20), "SIN REGISTROS DE LIGA", font=font_hist_text, fill=(120, 120, 120, 255))
+        pw = 80
+    pr_x = W - PAD - pw - 16
+    pr_y = av_y
+    draw.rounded_rectangle(
+        [pr_x - 10, pr_y - 2, pr_x + pw + 10, pr_y + 34],
+        radius=10, fill=(*GOLD, 30), outline=(*GOLD, 120), width=1
+    )
+    draw.text((pr_x, pr_y), precio_str, font=fn_med, fill=(*GOLD, 255))
+    label_p = "PRECIO"
+    try:
+        lw = draw.textlength(label_p, font=fn_xs)
+    except:
+        lw = 40
+    draw.text((pr_x + (pw - lw) // 2, pr_y + 36), label_p, font=fn_xs, fill=(0, 0, 0, 255))
+
+    # Logo escudo (arriba derecha, pequeño)
+    if logo_img:
+        sm = logo_img.copy()
+        sm.thumbnail((52, 52), Image.Resampling.LANCZOS)
+        img.alpha_composite(sm, (W - PAD - sm.width, pr_y + 62))
+
+    # ══════════════════════════════════════════
+    # SEPARADOR
+    # ══════════════════════════════════════════
+    sep_y = av_y + AV + 28
+    draw.line((PAD, sep_y, W - PAD, sep_y), fill=(255, 255, 255, 22), width=1)
+
+    # ══════════════════════════════════════════
+    # STATS: PJ · GOLES · ASIST · MVPs
+    # ══════════════════════════════════════════
+    stats_y  = sep_y + 20
+    stats    = [("PJ", partidos), ("GOLES", goles), ("ASIST", asistencias), ("MVPs", mvps)]
+    n_stats  = len(stats)
+    box_w    = (W - PAD * 2 - 12 * (n_stats - 1)) // n_stats
+    box_h    = 88
+
+    for i, (label, val) in enumerate(stats):
+        bx = PAD + i * (box_w + 12)
+        by = stats_y
+        draw.rounded_rectangle(
+            [bx, by, bx + box_w, by + box_h],
+            radius=12, fill=(255, 255, 255, 10), outline=(255, 255, 255, 22), width=1
+        )
+        # acento top
+        draw.rounded_rectangle(
+            [bx + box_w // 2 - 22, by, bx + box_w // 2 + 22, by + 3],
+            radius=2, fill=(*ACCENT, 220)
+        )
+        cx(label, fn_xs, bx + box_w // 2, by + 10, (0, 0, 0, 255))
+        cx(str(val), fn_stat, bx + box_w // 2, by + 32, (0, 0, 0, 255))
+
+    # ══════════════════════════════════════════
+    # HISTORIAL DE EQUIPOS
+    # ══════════════════════════════════════════
+    hist_y = stats_y + box_h + 28
+    draw.line((PAD, hist_y, W - PAD, hist_y), fill=(255, 255, 255, 22), width=1)
+    hist_y += 16
+
+    label_hist = "HISTORIAL DE EQUIPOS"
+    try:
+        lhw = draw.textlength(label_hist, font=fn_xs)
+    except:
+        lhw = 150
+    draw.text((PAD, hist_y), label_hist, font=fn_xs, fill=(*GOLD, 200))
+    hist_y += 28
+
+    TIPO_COLOR = {
+        'FICHAJE':  (46,  204, 113),
+        'DESPIDO':  (231, 76,  60),
+        'RENUNCIA': (241, 196, 15),
+    }
+    TIPO_LABEL = {
+        'FICHAJE':  'FICHADO POR',
+        'DESPIDO':  'DESPEDIDO DE',
+        'RENUNCIA': 'RENUNCIÓ A',
+    }
+
+    if not historial:
+        draw.text((PAD, hist_y + 10), "Sin registros de transferencias", font=fn_small, fill=(0, 0, 0, 255))
     else:
         for (fecha, tipo, eq_hist) in historial:
-            hx = 70
-            
-            # Colorimetría del Timeline
-            bar_color = (150, 150, 150, 255)
-            if tipo == 'FICHAJE':
-                bar_color = (46, 204, 113, 255) # Verde Esmeralda
-                icon_text = "FICHADO POR"
-            elif tipo == 'DESPIDO':
-                bar_color = (231, 76, 60, 255) # Rojo Fuerte
-                icon_text = "DESPEDIDO DE"
-            elif tipo == 'RENUNCIA':
-                bar_color = (241, 196, 15, 255) # Amarillo 
-                icon_text = "RENUNCIÓ A"
-            else:
-                icon_text = str(tipo)
-                
-            # Renderizado de caja del evento
-            draw.rounded_rectangle([hx, y_offset, WIDTH - hx, y_offset + 70], radius=12, fill=(255,255,255, 12), outline=(255, 255, 255, 20), width=1)
-            # Rayita identificadora estado 
-            draw.rounded_rectangle([hx, y_offset, hx + 8, y_offset + 70], radius=4, fill=bar_color)
-            
-            # Píldora de Fecha
-            draw.rounded_rectangle([hx + 25, y_offset + 22, hx + 105, y_offset + 48], radius=8, fill=(0,0,0,200))
-            draw.text((hx + 33, y_offset + 25), str(fecha), font=font_hist_date, fill=(200,200,200,255))
-            
-            # Texto Acción principal
-            action_str = f"{icon_text}  {str(eq_hist).upper()}"
-            draw.text((hx + 125, y_offset + 20), action_str, font=font_hist_text, fill="white")
-            
-            y_offset += 85
+            bar_col = TIPO_COLOR.get(tipo, (120, 120, 120))
+            accion  = TIPO_LABEL.get(tipo, tipo)
+            row_h   = 56
 
-    # Convertir a RGB sólido para Discord PNG
+            draw.rounded_rectangle(
+                [PAD, hist_y, W - PAD, hist_y + row_h],
+                radius=10, fill=(255, 255, 255, 8), outline=(255, 255, 255, 16), width=1
+            )
+            # barra lateral coloreada
+            draw.rounded_rectangle(
+                [PAD, hist_y, PAD + 5, hist_y + row_h],
+                radius=3, fill=(*bar_col, 255)
+            )
+            # fecha
+            draw.text((PAD + 16, hist_y + 8),  str(fecha),  font=fn_xs,    fill=(0, 0, 0, 255))
+            # acción
+            draw.text((PAD + 16, hist_y + 26), accion,      font=fn_small, fill=(*bar_col, 230))
+            # equipo
+            eq_up = str(eq_hist).upper()
+            try:
+                eqw = draw.textlength(eq_up, font=fn_med)
+            except:
+                eqw = 100
+            draw.text((W - PAD - eqw - 6, hist_y + 16), eq_up, font=fn_med, fill=(0, 0, 0, 255))
+
+            hist_y += row_h + 10
+
+    # ══════════════════════════════════════════
+    # FOOTER
+    # ══════════════════════════════════════════
+    footer_y = H - 28
+    footer   = "AMAPICKS"
+    try:
+        fw = draw.textlength(footer, font=fn_xs)
+    except:
+        fw = 60
+    draw.text((W // 2 - fw // 2, footer_y), footer, font=fn_xs, fill=(0, 0, 0, 255))
+
     img_final = img.convert('RGB')
-
     output = io.BytesIO()
     img_final.save(output, format="PNG", optimize=True)
     output.seek(0)

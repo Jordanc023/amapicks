@@ -168,6 +168,26 @@ export default function useAdminData() {
         }
     };
 
+    const handleUpdatePresupuestosMasivo = async (equipoIds, presupuesto) => {
+        setSaving('presupuestos-masivo');
+        try {
+            const res = await ligaService.updatePresupuestosMasivo(equipoIds, presupuesto);
+            // Actualizar el estado local
+            const updatedPresupuestos = {};
+            equipoIds.forEach(id => {
+                updatedPresupuestos[id] = presupuesto;
+            });
+            setPresupuestos(prev => ({ ...prev, ...updatedPresupuestos }));
+            alert(`✅ ${res.message} (${res.equipos_actualizados} equipos)`);
+            await loadData();
+        } catch (error) {
+            console.error(error);
+            alert("❌ Error al actualizar presupuestos masivamente.");
+        } finally {
+            setSaving(null);
+        }
+    };
+
     // ========================================================================
     //  JUGADORES HANDLERS
     // ========================================================================
@@ -192,6 +212,26 @@ export default function useAdminData() {
         }
     };
 
+    const handleUpdatePreciosMasivo = async (jugadorIds, precio, clausula) => {
+        setSaving('precios-masivo');
+        try {
+            const res = await ligaService.updatePreciosJugadoresMasivo(jugadorIds, precio, clausula);
+            // Actualizar el estado local
+            const updatedPrecios = {};
+            jugadorIds.forEach(id => {
+                updatedPrecios[id] = { precio, clausula };
+            });
+            setPreciosJugadores(prev => ({ ...prev, ...updatedPrecios }));
+            alert(`✅ ${res.message} (${res.jugadores_actualizados} jugadores)`);
+            await loadData();
+        } catch (error) {
+            console.error(error);
+            alert("❌ Error al actualizar precios masivamente.");
+        } finally {
+            setSaving(null);
+        }
+    };
+
     const openEditStats = (jugador) => {
         setSelectedJugador(jugador);
         setIsStatsModalOpen(true);
@@ -208,8 +248,8 @@ export default function useAdminData() {
     };
 
     const filteredJugadores = jugadores.filter(j =>
-        j.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (j.equipo && j.equipo.toLowerCase().includes(searchTerm.toLowerCase()))
+        (j.nombre || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (j.equipo || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     // ========================================================================
@@ -577,10 +617,12 @@ export default function useAdminData() {
         // Equipos handlers
         handlePresupuestoChange,
         handleUpdatePresupuesto,
+        handleUpdatePresupuestosMasivo,
 
         // Jugadores handlers
         handlePrecioJugadorChange,
         handleUpdatePrecio,
+        handleUpdatePreciosMasivo,
         openEditStats,
         handleStatsSave,
 

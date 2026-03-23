@@ -52,18 +52,19 @@ ROLES_ADMIN = [
 ]
 
 # ============================================
-# CONFIGURACIÓN DE CANALES (DEFAULTS)
+# CONFIGURACIÓN DE CANALES (IDs de Discord)
 # ============================================
 
-CANAL_AGENTES_LIBRES = '✦【💼】agentes-libres'
-CANAL_FICHAJES = 'fichajes'
-CANAL_LOGS = 'logspicks'
-CANAL_BACKUPS = 'backups-bot'
+# IDs de canales (más estables que nombres)
+CANAL_AGENTES_LIBRES_ID = 1485416400100135042  # Reemplazar con ID real del canal ✦【💼】agentes-libres
+CANAL_FICHAJES_ID = 1485416341505708163         # Reemplazar con ID real del canal fichajes
+CANAL_LOGS_ID = 1462261514433204321            # Reemplazar con ID real del canal logspicks
+CANAL_BACKUPS_ID = 1462261514433204322         # Reemplazar con ID real del canal backups-bot
 
 # Canal específico para ofertas de fichaje (por ID)
 # DTs solo pueden usar /fichar en este canal
 # Notificaciones de aceptar/rechazar/expirar van aquí
-CANAL_OFERTAS_ID = 1462261514433204318
+CANAL_OFERTAS_ID = 1485416456614187111
 
 # ============================================
 # CONFIGURACIÓN DEL JUEGO

@@ -58,7 +58,7 @@ const MiEquipo = () => {
                     if (miEquipo) {
                         const todosJugadores = await ligaService.getJugadores('todos');
                         const misJugadores = todosJugadores.filter(j =>
-                            j.equipo === miEquipo.nombre || j.equipo === miEquipo.role_name
+                            (j.equipo === miEquipo.nombre || j.equipo === miEquipo.role_name) && !j.es_dt
                         );
                         setJugadores(misJugadores);
                     }
@@ -144,7 +144,7 @@ const MiEquipo = () => {
 
     const posColor = getPosColor(miJugador?.posicion);
     const precio = miJugador?.precio || miJugador?.clausula || 0;
-    const esDT = miJugador?.es_dt || user?.team_id;
+    const esDT = miJugador?.es_dt || false;
     const totalFichajes = calcularFichajes(miJugador?.historial);
 
     return (
@@ -189,6 +189,22 @@ const MiEquipo = () => {
                                         </div>
                                     )}
 
+                                    {/* SubDT Badge */}
+                                    {miJugador?.es_subdt && (
+                                        <div className="absolute top-6 right-6 z-20 flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 border border-blue-500/30 rounded-full">
+                                            <Crown size={14} className="text-blue-500" />
+                                            <span className="text-xs font-black text-blue-500 uppercase tracking-widest">SubDT</span>
+                                        </div>
+                                    )}
+
+                                    {/* Capitan Badge */}
+                                    {miJugador?.es_capitan && (
+                                        <div className="absolute top-6 right-6 z-20 flex items-center gap-1.5 px-3 py-1.5 bg-yellow-500/10 border border-yellow-500/30 rounded-full">
+                                            <Star size={14} className="text-yellow-500" />
+                                            <span className="text-xs font-black text-yellow-500 uppercase tracking-widest">CAP</span>
+                                        </div>
+                                    )}
+
                                     {/* Player Avatar - FIFA Style */}
                                     <div className="relative w-52 h-52 mt-8 mb-6 z-10">
                                         {/* Glow ring */}
@@ -218,7 +234,8 @@ const MiEquipo = () => {
                                         </div>
                                     )}
 
-                                    {/* Stats Grid - FIFA Style */}
+                                    {/* Stats Grid - FIFA Style - Solo para jugadores (no DT) */}
+                                    {!esDT && (
                                     <div className="grid grid-cols-3 gap-3 w-full relative z-10">
                                         <div className="bg-dark-800/80 border border-white/5 rounded-xl p-3 text-center hover:border-gold-500/20 transition-colors">
                                             <DollarSign size={16} className="text-gold-500 mx-auto mb-1" />
@@ -242,8 +259,30 @@ const MiEquipo = () => {
                                             <span className="block text-[10px] text-gray-500 uppercase tracking-widest mt-1">Días</span>
                                         </div>
                                     </div>
+                                    )}
 
-                                    {/* Clausula / Precio detail */}
+                                    {/* Stats Grid para DT */}
+                                    {esDT && (
+                                    <div className="grid grid-cols-2 gap-3 w-full relative z-10">
+                                        <div className="bg-dark-800/80 border border-white/5 rounded-xl p-3 text-center hover:border-gold-500/20 transition-colors">
+                                            <Crown size={16} className="text-gold-500 mx-auto mb-1" />
+                                            <span className="block text-white font-black text-lg leading-none">
+                                                {jugadores.length}
+                                            </span>
+                                            <span className="block text-[10px] text-gray-500 uppercase tracking-widest mt-1">Jugadores</span>
+                                        </div>
+                                        <div className="bg-dark-800/80 border border-white/5 rounded-xl p-3 text-center hover:border-gold-500/20 transition-colors">
+                                            <Calendar size={16} className="text-blue-500 mx-auto mb-1" />
+                                            <span className="block text-white font-black text-lg leading-none">
+                                                {calcularDiasEnEquipo(miJugador?.fecha_fichaje)}
+                                            </span>
+                                            <span className="block text-[10px] text-gray-500 uppercase tracking-widest mt-1">Días</span>
+                                        </div>
+                                    </div>
+                                    )}
+
+                                    {/* Clausula / Precio detail - Solo para jugadores (no DT) */}
+                                    {!esDT && (
                                     <div className="w-full mt-4 relative z-10">
                                         <div className="bg-gradient-to-r from-gold-500/10 to-transparent border border-gold-500/20 rounded-xl p-4 flex items-center justify-between">
                                             <div>
@@ -255,6 +294,7 @@ const MiEquipo = () => {
                                             <Award className="text-gold-500/40 w-10 h-10" />
                                         </div>
                                     </div>
+                                    )}
                                 </div>
 
                                 {/* ===== RIGHT: DETALLES ===== */}
@@ -346,12 +386,14 @@ const MiEquipo = () => {
                                             </span>
                                             <span className="block text-xs text-gray-500 uppercase tracking-widest mt-1">Dorsal</span>
                                         </div>
+                                        {!esDT && (
                                         <div className="bg-dark-800 border border-white/5 rounded-xl p-4 text-center group hover:border-gold-500/20 transition-all">
                                             <span className="block text-2xl font-black text-white group-hover:text-gold-500 transition-colors">
                                                 ${new Intl.NumberFormat('en-US').format(miJugador?.precio || 0)}
                                             </span>
                                             <span className="block text-xs text-gray-500 uppercase tracking-widest mt-1">Precio</span>
                                         </div>
+                                        )}
                                     </div>
 
                                     {/* Trayectoria */}

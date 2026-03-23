@@ -30,7 +30,7 @@ class BotonFicharAgenteView(View):
         if not es_dt:
             return await interaction.response.send_message("❌ Solo los Directores Técnicos (DT) pueden usar este botón.", ephemeral=True)
             
-        canal_ofertas = interaction.guild.get_channel(config.CANAL_OFERTAS_ID)
+        canal_ofertas = interaction.guild.get_channel(config.CANAL_FICHAJES_ID)
         if canal_ofertas:
             await interaction.response.send_message(f"✅ ¡Excelente! Ve al canal {canal_ofertas.mention} y usa el comando:\n `/fichar <@{self.jugador_id}>` para enviarle tu propuesta económica.", ephemeral=True)
         else:
@@ -153,7 +153,7 @@ class JugadoresCog(commands.Cog):
                 pass
 
             # Notificar en canal de agentes libres (Mejorado con estilo y botón)
-            canal_agentes = discord.utils.get(ctx.guild.text_channels, name=CANAL_AGENTES_LIBRES)
+            canal_agentes = ctx.guild.get_channel(config.CANAL_AGENTES_LIBRES_ID)
             rol_dt = discord.utils.get(ctx.guild.roles, name=config.ROL_DE_DT)
 
             if canal_agentes:
@@ -222,11 +222,15 @@ class JugadoresCog(commands.Cog):
         jugador_db = await jugadores_col.find_one({'discord_id': str(jugador.id)})
         agente_db = await agentes_col.find_one({'discord_id': str(jugador.id)})
 
+        db_src = jugador_db or agente_db or {}
         equipo_actual = jugador_db.get('equipo') if jugador_db else None
-        posicion = agente_db.get('posicion') if agente_db else None
-        dorsal = jugador_db.get('dorsal', '??') if jugador_db else '??'
-        goles = jugador_db.get('goles', 0) if jugador_db else 0
-        partidos = jugador_db.get('partidos_jugados', jugador_db.get('partidos', 0)) if jugador_db else 0
+        posicion = db_src.get('posicion', None)
+        dorsal = db_src.get('dorsal', '??')
+        goles = db_src.get('goles', 0)
+        asistencias = db_src.get('asistencias', 0)
+        mvps = db_src.get('mvps', 0)
+        partidos = db_src.get('partidos_jugados', db_src.get('partidos', 0))
+        precio = db_src.get('precio') or db_src.get('clausula') or db_src.get('valor_mercado') or 0
 
         # ── Color y Logo del Equipo (si tiene) ──
         equipos_col = get_collection('equipos')
@@ -268,7 +272,10 @@ class JugadoresCog(commands.Cog):
                 posicion=posicion,
                 dorsal=dorsal,
                 goles=goles,
+                asistencias=asistencias,
+                mvps=mvps,
                 partidos=partidos,
+                precio=precio,
                 historial=historial_list
             )
             
