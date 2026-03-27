@@ -25,17 +25,22 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual environments
+# Virtual environments (todos los posibles)
 venv/
+venv-*/
 ENV/
 env/
+.env/
 .venv/
+.venv-*/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+.cursor/
+.windsurf/
 
 # Node.js
 node_modules/
@@ -55,3 +60,28 @@ backup_*.json
 
 # Logs
 *.log
+
+# Archivos temporales de diagnostico/checks
+web/backend/check_*.py
+web/backend/check_*.txt
+web/backend/deep_check*.py
+web/backend/deep_check*.txt
+web/backend/list_*.py
+web/backend/migrate_*.py
+web/backend/sample_*.py
+web/backend/db_*.json
+web/backend/db_*.py
+
+# Entornos virtuales en subcarpetas
+web/backend/venv/
+web/backend/env/
+
+# Archivos de caché de Python
+*/__pycache__/
+
+# Archivos temporales locales que no van al repo
+CLAUDE.md
+.claudeignore
+amapicks.log
+test_discord_tree.py
+force_sync_remote.py
