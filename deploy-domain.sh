@@ -64,6 +64,11 @@ cd ../..
 echo ""
 echo "[4/7] Configurando Nginx..."
 
+# Crear directorios de Nginx si no existen
+sudo mkdir -p /etc/nginx/sites-available
+sudo mkdir -p /etc/nginx/sites-enabled
+sudo mkdir -p /var/log/nginx
+
 # Reemplazar dominio en nginx config
 sed -i "s/TU_DOMINIO.com/$DOMINIO/g" nginx/amapicks.conf
 
