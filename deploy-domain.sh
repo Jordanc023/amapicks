@@ -50,7 +50,8 @@ echo "[3/7] Instalando dependencias..."
 
 # Backend
 echo "   📦 Backend (Python)..."
-pip install -q -r requirements.txt
+PROJECT_DIR="/home/jordanvps/amapicks"
+$PROJECT_DIR/venv/bin/pip install -q -r requirements.txt
 
 # Frontend
 echo "   📦 Frontend (Node)..."

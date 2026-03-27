@@ -22,6 +22,7 @@ const SistemaTab = ({
     handleSaveGlobalConfig,
     handleBackup,
     handleResetSeason,
+    handleFullReset,
     handleNuke,
     handlePurgeLogs,
     // Config
@@ -349,6 +350,18 @@ const SistemaTab = ({
                                         {saving === 'reset' ? 'Reseteando...' : 'RESET LIGA'}
                                     </button>
                                 </div>
+                                <div className="p-4 bg-black/40 border border-yellow-500/10 rounded-xl">
+                                    <h4 className="text-yellow-400 text-sm font-medium mb-1">Reset Completo (Stats 0)</h4>
+                                    <p className="text-gray-500 text-xs mb-3">Todo a CERO: presupuestos, precios, stats. Mantiene estructuras.</p>
+                                    <button
+                                        onClick={handleFullReset}
+                                        disabled={saving === 'full-reset'}
+                                        className="w-full py-2 bg-yellow-600/20 hover:bg-yellow-600 hover:text-white disabled:opacity-50 border border-yellow-500/50 text-yellow-500 rounded-lg transition-all text-xs font-bold">
+                                        {saving === 'full-reset' ? 'Reseteando...' : 'FULL RESET'}
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 gap-3">
                                 <div className="p-4 bg-black/40 border border-blue-500/10 rounded-xl">
                                     <h4 className="text-blue-400 text-sm font-medium mb-1">Purgar Registros</h4>
                                     <p className="text-gray-500 text-xs mb-3">Elimina historiales y auditoría (+60 días) para aligerar la BD.</p>

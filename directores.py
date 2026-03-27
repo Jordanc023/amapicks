@@ -33,6 +33,9 @@ class FundarNombreModal(Modal, title='📝 Elegir Nombre'):
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
+            if self.view_parent.enviado:
+                await interaction.response.send_message("⚠️ Ya enviaste la solicitud de fundación. No puedes cambiar el nombre.", ephemeral=True)
+                return
             self.view_parent.nombre = self.nombre.value.strip()
             await self.view_parent.update_message(interaction)
         except Exception as e:
@@ -60,6 +63,9 @@ class FundarColorSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         try:
             view: FundarEquipoView = self.view
+            if view.enviado:
+                await interaction.response.send_message("⚠️ Ya enviaste la solicitud de fundación. No puedes cambiar el color.", ephemeral=True)
+                return
             view.color = self.values[0]
             # Mantener la seleccion visual
             for option in self.options:
@@ -73,53 +79,31 @@ class FundarColorSelect(discord.ui.Select):
                 await interaction.followup.send(f"❌ Error interno: {e}", ephemeral=True)
 
 
-class FundarEscudoModal(Modal, title='🖼️ Enlace del Escudo'):
-    logo_url = TextInput(
-        label='URL del Escudo (PNG/JPG)',
-        style=discord.TextStyle.short,
-        placeholder='https://midominio.com/logo.png',
-        required=True,
-        max_length=500
-    )
-
-    def __init__(self, view: "FundarEquipoView"):
-        super().__init__()
-        self.view_parent = view
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            logo_val = self.logo_url.value.strip()
-            if not logo_val.startswith('http'):
-                await interaction.response.send_message("❌ La URL debe empezar con http:// o https://.", ephemeral=True)
-                return
-            
-            self.view_parent.logo_url = logo_val
-            await self.view_parent.update_message(interaction)
-        except Exception as e:
-            logger.error(f"Error en FundarEscudoModal: {e}", exc_info=True)
-            if not interaction.response.is_done():
-                await interaction.response.send_message(f"❌ Error interno: {e}", ephemeral=True)
-            else:
-                await interaction.followup.send(f"❌ Error interno: {e}", ephemeral=True)
 
 
 class FundarEquipoView(View):
-    def __init__(self, user: discord.Member, logo_inicial: str = None):
+    def __init__(self, user: discord.Member, logo_url: str):
         super().__init__(timeout=600.0) # 10 mins timeout
         self.user = user
         self.nombre = None
         self.color = None
-        self.logo_url = logo_inicial
+        self.logo_url = logo_url
+        self.enviado = False
         
         self.add_item(FundarColorSelect())
         self.actualizar_botones()
 
     def actualizar_botones(self):
-        # Habilitar o Deshabilitar el botón final
-        listo = bool(self.nombre and self.color and self.logo_url)
+        # Habilitar o Deshabilitar el botón final (logo ya viene precargado)
+        listo = bool(self.nombre and self.color)
+        
         for child in self.children:
-            if isinstance(child, Button) and child.custom_id == "btn_confirmar":
+            if self.enviado:
+                child.disabled = True
+            elif isinstance(child, Button) and child.custom_id == "btn_confirmar":
                 child.disabled = not listo
+            elif isinstance(child, (Button, Select)):
+                child.disabled = False
 
     def build_embed(self) -> discord.Embed:
         # Resolvemos el color de manera segura
@@ -165,13 +149,17 @@ class FundarEquipoView(View):
     async def btn_nombre(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(FundarNombreModal(self))
 
-    @discord.ui.button(label="🖼️ Escudo (Link)", style=discord.ButtonStyle.secondary, custom_id="btn_escudo", row=1)
-    async def btn_escudo(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_modal(FundarEscudoModal(self))
+
 
     @discord.ui.button(label="✅ CONFIRMAR FUNDACIÓN", style=discord.ButtonStyle.success, custom_id="btn_confirmar", disabled=True, row=2)
     async def btn_confirmar(self, interaction: discord.Interaction, button: Button):
+        if self.enviado:
+            return
+            
         await interaction.response.defer(ephemeral=True)
+        self.enviado = True  # Marcar como enviado inmediatamente
+        self.actualizar_botones() # Desactivar visualmente todo
+        
         try:
             equipos_col = get_collection('equipos')
             nombre_con_guion = f"-{self.nombre.upper()}" if not self.nombre.startswith('-') else self.nombre.upper()
@@ -196,14 +184,19 @@ class FundarEquipoView(View):
                 "fecha_solicitud": datetime.utcnow()
             })
 
-            # Deshabilitar todo
+            # Deshabilitar todo (ya se hizo arriba pero reforzamos antes de editar)
             for child in self.children:
                 child.disabled = True
             
             embed_exito = self.build_embed()
             embed_exito.title = "🎉 ¡Solicitud de Fundación Enviada!"
             embed_exito.description = "El bot está procesando tu solicitud para crear los canales y el rol."
-            await interaction.message.edit(embed=embed_exito, view=self)
+            
+            # Intentar editar el mensaje, pero manejar el caso de que haya expirado
+            try:
+                await interaction.message.edit(embed=embed_exito, view=self)
+            except discord.errors.NotFound:
+                logger.warning("El mensaje de fundación expiró antes de poder editarse (esto es normal con mensajes efímeros).")
             
             await interaction.followup.send(
                 f"✅ **¡Solicitud enviada con éxito!**\n"
@@ -355,14 +348,14 @@ class DirectoresCog(commands.Cog):
 
         # 1. Verificar permisos de Admin
         if not es_admin(ctx.author):
-            await ctx.send("❌ Solo los administradores pueden asignar DTs.")
+            await ctx.followup.send("❌ Solo los administradores pueden asignar DTs.")
             return
 
         # 2. Buscar equipo
         nombre_equipo_raw = equipo.strip()
 
         if not nombre_equipo_raw:
-            await ctx.send("⚠️ Debes especificar el nombre del equipo.")
+            await ctx.followup.send("⚠️ Debes especificar el nombre del equipo.")
             return
 
         equipo_encontrado, coincidencias = buscar_equipo(nombre_equipo_raw, self.bot.roles_equipos)
@@ -370,9 +363,9 @@ class DirectoresCog(commands.Cog):
         if not equipo_encontrado:
             if coincidencias:
                 lista = "\n".join([f"• {c}" for c in coincidencias[:5]])
-                await ctx.send(f"⚠️ **{nombre_equipo_raw}** es ambiguo. ¿Te referías a alguno de estos?\n{lista}")
+                await ctx.followup.send(f"⚠️ **{nombre_equipo_raw}** es ambiguo. ¿Te referías a alguno de estos?\n{lista}")
             else:
-                await ctx.send(f"❌ No encontré ningún equipo llamado **{nombre_equipo_raw}**.\nUsa `/plantilla` para ver los equipos disponibles.")
+                await ctx.followup.send(f"❌ No encontré ningún equipo llamado **{nombre_equipo_raw}**.\nUsa `/plantilla` para ver los equipos disponibles.")
             return
 
         # 3. Lógica de inscripción
@@ -381,11 +374,11 @@ class DirectoresCog(commands.Cog):
             rol_dt_obj = discord.utils.get(ctx.guild.roles, name=config.ROL_DE_DT)
 
             if not rol_equipo_obj:
-                await ctx.send(f"❌ Error crítico: El equipo existe en BD pero no encuentro el rol **{equipo_encontrado}** en Discord.")
+                await ctx.followup.send(f"❌ Error crítico: El equipo existe en BD pero no encuentro el rol **{equipo_encontrado}** en Discord.")
                 return
 
             if not rol_dt_obj:
-                await ctx.send(f"❌ Error crítico: No encuentro el rol de DT **{config.ROL_DE_DT}** en Discord.")
+                await ctx.followup.send(f"❌ Error crítico: No encuentro el rol de DT **{config.ROL_DE_DT}** en Discord.")
                 return
 
             # Asignar roles
@@ -426,7 +419,7 @@ class DirectoresCog(commands.Cog):
             else:
                 embed.set_thumbnail(url=usuario.display_avatar.url)
 
-            await ctx.send(embed=embed)
+            await ctx.followup.send(embed=embed)
             logger.info(f"👔 Nuevo DT: {usuario.name} -> {equipo_encontrado} (por {ctx.author.name})")
 
             # Log de auditoría (async)
@@ -441,9 +434,9 @@ class DirectoresCog(commands.Cog):
             )
 
         except discord.Forbidden:
-            await ctx.send("❌ No tengo permisos para asignar roles. Sube mi rol por encima de los equipos y DTs.")
+            await ctx.followup.send("❌ No tengo permisos para asignar roles. Sube mi rol por encima de los equipos y DTs.")
         except Exception as e:
-            await ctx.send(f"❌ Error inesperado: {e}")
+            await ctx.followup.send(f"❌ Error inesperado: {e}")
             logger.error(f"Error en inscribir_dt: {e}", exc_info=True)
 
     @commands.hybrid_command(name="banco", description="Revisar el estado de cuenta y fondos de tu equipo (DT).")
@@ -453,7 +446,7 @@ class DirectoresCog(commands.Cog):
         
         # 1. Validar que sea DT
         if not discord.utils.get(ctx.author.roles, name=config.ROL_DE_DT):
-            await ctx.send("❌ Este comando es exclusivo para **Directores Técnicos**.", ephemeral=True)
+            await ctx.followup.send("❌ Este comando es exclusivo para **Directores Técnicos**.", ephemeral=True)
             return
             
         # 2. Encontrar el rol de su equipo
@@ -464,7 +457,7 @@ class DirectoresCog(commands.Cog):
                 break
                 
         if not equipo_nombre:
-            await ctx.send("⚠️ Eres DT pero no pareces tener el rol de tu equipo asignado.", ephemeral=True)
+            await ctx.followup.send("⚠️ Eres DT pero no pareces tener el rol de tu equipo asignado.", ephemeral=True)
             return
 
         equipos_col = get_collection("equipos")
@@ -473,7 +466,7 @@ class DirectoresCog(commands.Cog):
 
         equipo_doc = await equipos_col.find_one({"nombre": equipo_nombre})
         if not equipo_doc:
-            await ctx.send("⚠️ Error: Tu equipo no está registrado en la base de datos.", ephemeral=True)
+            await ctx.followup.send("⚠️ Error: Tu equipo no está registrado en la base de datos.", ephemeral=True)
             return
 
         # 3. Calcular Métrica 1: Presupuesto Bruto
@@ -481,15 +474,21 @@ class DirectoresCog(commands.Cog):
 
         # 4. Calcular Métrica 2: Fondos Retenidos (Escrow)
         fondos_retenidos = 0
-        ofertas_pendientes = ofertas_col.find({"equipo": equipo_nombre})
-        async for oferta in ofertas_pendientes:
-            fondos_retenidos += oferta.get("monto_ofrecido", 0)
+        try:
+            cursor_ofertas = ofertas_col.find({"equipo": equipo_nombre})
+            async for oferta in cursor_ofertas:
+                fondos_retenidos += oferta.get("monto_ofrecido", 0)
+        except Exception as e:
+            logger.warning(f"Error calculando fondos retenidos para {equipo_nombre}: {e}")
 
         # 5. Calcular Métrica 3: Valor de Plantilla
         valor_plantilla = 0
-        jugadores_equipo = jugadores_col.find({"equipo": equipo_nombre})
-        async for jugador in jugadores_equipo:
-            valor_plantilla += jugador.get("precio", 0)
+        try:
+            cursor_jugadores = jugadores_col.find({"equipo": equipo_nombre})
+            async for jugador in cursor_jugadores:
+                valor_plantilla += jugador.get("precio", 0)
+        except Exception as e:
+            logger.warning(f"Error calculando valor de plantilla para {equipo_nombre}: {e}")
 
         # 6. Presupuesto Disponible
         presupuesto_disponible = presupuesto_total - fondos_retenidos
@@ -528,9 +527,9 @@ class DirectoresCog(commands.Cog):
         embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/2830/2830284.png")
         embed.set_footer(text=f"Consultado por el DT {ctx.author.display_name}", icon_url=ctx.author.display_avatar.url if ctx.author.display_avatar else None)
         
-        await ctx.send(embed=embed, ephemeral=True)
+        await ctx.followup.send(embed=embed, ephemeral=True)
 
-    @commands.hybrid_command(name="licencia_dt", description="Otorga permiso a un usuario para fundar un club en la Web (Admin)")
+    @commands.hybrid_command(name="licencia_dt", description="Otorga licencia de DT a un usuario para fundar un club (Admin)")
     async def licencia_dt(self, ctx, usuario: discord.Member):
         """
         Da la licencia de DT al usuario y le permite usar /fundar_equipo.
@@ -538,12 +537,12 @@ class DirectoresCog(commands.Cog):
         await ctx.defer()
         
         if not es_admin(ctx.author):
-            await ctx.send("❌ Solo los administradores pueden otorgar licencias de DT.")
+            await ctx.followup.send("❌ Solo los administradores pueden otorgar licencias de DT.")
             return
 
         rol_licencia_obj = ctx.guild.get_role(getattr(config, 'ROL_LICENCIA_ID', 1474670232181411994))
         if not rol_licencia_obj:
-            await ctx.send(f"❌ Error: No encuentro el rol de Licencia de Fundador (ID: 1474670232181411994) en el servidor.")
+            await ctx.followup.send(f"❌ Error: No encuentro el rol de Licencia de Fundador (ID: 1474670232181411994) en el servidor.")
             return
 
         try:
@@ -595,20 +594,31 @@ class DirectoresCog(commands.Cog):
             embed.set_footer(text=f"Licencia ID: {str(usuario.id)[:6]}-{datetime.datetime.now().strftime('%M%S')} • Emitida: {fecha}")
             embed.set_thumbnail(url=usuario.display_avatar.url)
             
-            await ctx.send(content=f"{usuario.mention}", embed=embed)
+            await ctx.followup.send(content=f"{usuario.mention}", embed=embed)
             logger.info(f"🎫 Licencia DT otorgada a {usuario.name} por {ctx.author.name}")
 
         except discord.Forbidden:
-            await ctx.send("❌ No tengo permisos suficientes para asignar el rol de DT. (Verifica mis permisos)")
+            await ctx.followup.send("❌ No tengo permisos suficientes para asignar el rol de DT. (Verifica mis permisos)")
         except Exception as e:
-            await ctx.send(f"❌ Error inesperado: {e}")
+            await ctx.followup.send(f"❌ Error inesperado: {e}")
             logger.error(f"Error en licencia_dt: {e}", exc_info=True)
 
     @commands.hybrid_command(name="fundar_equipo", description="Crea tu propio equipo (Requiere Licencia de DT)")
-    async def fundar_equipo(self, ctx: commands.Context, escudo: discord.Attachment = None):
+    @app_commands.describe(escudo="Imagen del escudo de tu equipo (PNG/JPG) — obligatorio")
+    async def fundar_equipo(self, ctx: commands.Context, escudo: discord.Attachment):
         """Abre el panel interactivo para fundar un nuevo equipo directo en Discord."""
         if ctx.interaction is None:
             await ctx.send("❌ Este comando solo puede usarse como slash command (`/fundar_equipo`).", delete_after=10)
+            return
+
+        # Validar que el adjunto sea una imagen
+        tipos_imagen = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif']
+        if escudo.content_type and escudo.content_type not in tipos_imagen:
+            await ctx.send(
+                "❌ El archivo adjunto debe ser una **imagen** (PNG, JPG, WEBP o GIF).\n"
+                "Intenta de nuevo con una imagen válida.",
+                ephemeral=True
+            )
             return
 
         # Verificar permisos
@@ -624,18 +634,18 @@ class DirectoresCog(commands.Cog):
             await ctx.send(f"❌ Ya eres el DT del equipo **{jugador.get('equipo')}**. Debes renunciar primero si quieres fundar uno nuevo.", ephemeral=True)
             return
 
-        logo_url = escudo.url if escudo else None
+        # Verificar si ya tiene una solicitud pendiente antes de abrir el panel
+        pendientes_col = get_collection("clubes_pendientes_creacion")
+        ya_mandado = await pendientes_col.find_one({"discord_id": str(ctx.author.id)})
+        if ya_mandado:
+            await ctx.send("⚠️ Ya tienes una solicitud de fundación en proceso. Por favor espera a que se complete.", ephemeral=True)
+            return
 
-        # Abrir ventana Dashboard interactiva
-        view = FundarEquipoView(user=ctx.author, logo_inicial=logo_url)
+        # Abrir ventana Dashboard interactiva con el escudo ya cargado
+        view = FundarEquipoView(user=ctx.author, logo_url=escudo.url)
         embed = view.build_embed()
-        
-        mensaje_tip = ""
-        if not logo_url:
-            mensaje_tip = ("💡 *Tip: Si tienes el logo en tu PC/celular, puedes usar el comando nuevamente adjuntando "
-                           "la imagen en el parámetro 'escudo' para que se cargue automáticamente. Así te evitas poner enlaces.*")
 
-        await ctx.send(content=mensaje_tip, embed=embed, view=view, ephemeral=True)
+        await ctx.send(embed=embed, view=view, ephemeral=True)
 
     @commands.hybrid_command(name="subdt", description="Asigna un Sub-Director Técnico a tu equipo (cuenta en la plantilla).")
     @app_commands.describe(usuario="El jugador que será el SubDT")
@@ -645,7 +655,7 @@ class DirectoresCog(commands.Cog):
         
         # 1. Validar que quien ejecuta sea DT
         if not discord.utils.get(ctx.author.roles, name=config.ROL_DE_DT):
-            await ctx.send("❌ Solo el **Director Técnico** puede asignar un SubDT.", ephemeral=True)
+            await ctx.followup.send("❌ Solo el **Director Técnico** puede asignar un SubDT.", ephemeral=True)
             return
         
         # 2. Encontrar el equipo del DT
@@ -656,7 +666,7 @@ class DirectoresCog(commands.Cog):
                 break
         
         if not equipo_nombre:
-            await ctx.send("⚠️ No se encontró tu equipo.", ephemeral=True)
+            await ctx.followup.send("⚠️ No se encontró tu equipo.", ephemeral=True)
             return
         
         # 3. Verificar que el usuario sea jugador del mismo equipo
@@ -667,12 +677,12 @@ class DirectoresCog(commands.Cog):
         })
         
         if not jugador_doc:
-            await ctx.send(f"❌ **{usuario.display_name}** no es un jugador de tu equipo.", ephemeral=True)
+            await ctx.followup.send(f"❌ **{usuario.display_name}** no es un jugador de tu equipo.", ephemeral=True)
             return
         
         # 4. Verificar que no sea el DT actual
         if jugador_doc.get('es_dt', False):
-            await ctx.send("❌ No puedes asignar al DT como SubDT.", ephemeral=True)
+            await ctx.followup.send("❌ No puedes asignar al DT como SubDT.", ephemeral=True)
             return
         
         # 5. Asignar rol de SubDT
@@ -701,7 +711,7 @@ class DirectoresCog(commands.Cog):
         embed.add_field(name="Equipo", value=equipo_nombre, inline=True)
         embed.set_footer(text="El SubDT cuenta como parte de la plantilla")
         
-        await ctx.send(embed=embed)
+        await ctx.followup.send(embed=embed)
         logger.info(f"🎖️ Nuevo SubDT: {usuario.name} -> {equipo_nombre}")
     
     @commands.hybrid_command(name="capitan", description="Asigna un Capitán a tu equipo (cuenta en la plantilla).")
@@ -712,7 +722,7 @@ class DirectoresCog(commands.Cog):
         
         # 1. Validar que quien ejecuta sea DT
         if not discord.utils.get(ctx.author.roles, name=config.ROL_DE_DT):
-            await ctx.send("❌ Solo el **Director Técnico** puede asignar un Capitán.", ephemeral=True)
+            await ctx.followup.send("❌ Solo el **Director Técnico** puede asignar un Capitán.", ephemeral=True)
             return
         
         # 2. Encontrar el equipo del DT
@@ -723,7 +733,7 @@ class DirectoresCog(commands.Cog):
                 break
         
         if not equipo_nombre:
-            await ctx.send("⚠️ No se encontró tu equipo.", ephemeral=True)
+            await ctx.followup.send("⚠️ No se encontró tu equipo.", ephemeral=True)
             return
         
         # 3. Verificar que el usuario sea jugador del mismo equipo
@@ -734,12 +744,12 @@ class DirectoresCog(commands.Cog):
         })
         
         if not jugador_doc:
-            await ctx.send(f"❌ **{usuario.display_name}** no es un jugador de tu equipo.", ephemeral=True)
+            await ctx.followup.send(f"❌ **{usuario.display_name}** no es un jugador de tu equipo.", ephemeral=True)
             return
         
         # 4. Verificar que no sea el DT actual
         if jugador_doc.get('es_dt', False):
-            await ctx.send("❌ No puedes asignar al DT como Capitán.", ephemeral=True)
+            await ctx.followup.send("❌ No puedes asignar al DT como Capitán.", ephemeral=True)
             return
         
         # 5. Asignar rol de Capitán
@@ -768,7 +778,7 @@ class DirectoresCog(commands.Cog):
         embed.add_field(name="Equipo", value=equipo_nombre, inline=True)
         embed.set_footer(text="El Capitán cuenta como parte de la plantilla")
         
-        await ctx.send(embed=embed)
+        await ctx.followup.send(embed=embed)
         logger.info(f"⭐ Nuevo Capitán: {usuario.name} -> {equipo_nombre}")
 
 async def setup(bot):

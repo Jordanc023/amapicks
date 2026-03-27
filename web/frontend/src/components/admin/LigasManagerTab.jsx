@@ -1098,13 +1098,13 @@ const LigasManagerTab = ({ onCompeticionChanged }) => {
                                     <p className="text-gold-400 text-sm font-medium mb-2">Resumen</p>
                                     <p className="text-white text-sm">{equiposLiga.length} equipos</p>
                                     <p className="text-gray-400 text-sm">
-                                        {fixtureForm.tipo_liga === 'd1'
-                                            ? '14 jornadas (ida + vuelta) · requiere 8 equipos'
-                                            : `${(equiposLiga.length - 1) * 2} jornadas (ida y vuelta)`}
+                                        {(equiposLiga.length - 1) * 2} jornadas (ida y vuelta)
                                     </p>
-                                    <p className="text-gray-400 text-xs mt-1">
-                                        Unificado con el antiguo asistente de temporada: mismo calendario, por liga.
-                                    </p>
+                                    {selectedLiga.jornada_paron_copa && (
+                                        <p className="text-gray-400 text-xs mt-1">
+                                            Parón de copa: jornada {selectedLiga.jornada_paron_copa}
+                                        </p>
+                                    )}
                                 </div>
 
                                 <div className="space-y-4 mb-6 max-h-[55vh] overflow-y-auto pr-1">
@@ -1145,23 +1145,12 @@ const LigasManagerTab = ({ onCompeticionChanged }) => {
                                             value={fixtureForm.tipo_liga}
                                             onChange={(e) => setFixtureForm({ ...fixtureForm, tipo_liga: e.target.value })}
                                             className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-white focus:border-gold-500/50 focus:outline-none"
+                                            disabled
                                         >
                                             <option value="estandar">Todos contra todos (ida y vuelta)</option>
-                                            <option value="d1">Liga D1 (8 equipos, ida/vuelta + pausa copa)</option>
                                         </select>
+                                        <p className="text-xs text-gray-500 mt-1">La pausa de copa se configura al crear la liga (Jornada de Parón)</p>
                                     </div>
-                                    {fixtureForm.tipo_liga === 'd1' && (
-                                        <div>
-                                            <label className="text-sm text-gray-400 block mb-1">Días extra pausa copa (tras jornada 7)</label>
-                                            <input
-                                                type="number"
-                                                min="0"
-                                                value={fixtureForm.dias_pausa_copa}
-                                                onChange={(e) => setFixtureForm({ ...fixtureForm, dias_pausa_copa: parseInt(e.target.value) || 0 })}
-                                                className="w-full bg-dark-800 border border-white/10 rounded-lg px-3 py-2 text-white focus:border-gold-500/50 focus:outline-none"
-                                            />
-                                        </div>
-                                    )}
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <label className="text-sm text-gray-400 block mb-1">Clasificados playoffs</label>

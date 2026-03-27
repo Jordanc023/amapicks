@@ -8,7 +8,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 
 
-def setup_logger(name: str = "amapicks") -> logging.Logger:
+def setup_logger(name: str = "gbleagues") -> logging.Logger:
     """
     Configura y retorna el logger principal del bot.
 
@@ -47,7 +47,7 @@ def setup_logger(name: str = "amapicks") -> logging.Logger:
 
     try:
         file_handler = RotatingFileHandler(
-            filename="amapicks.log",
+            filename="gbleagues.log",
             maxBytes=5 * 1024 * 1024,  # 5 MB por archivo
             backupCount=3,
             encoding="utf-8"
@@ -66,7 +66,7 @@ def setup_logger(name: str = "amapicks") -> logging.Logger:
 
 # Logger principal — importar desde cualquier módulo:
 #   from logger import log
-log = setup_logger("amapicks")
+log = setup_logger("gbleagues")
 
 # Sub-loggers para módulos específicos (opcional, hereda configuración)
 # Se pueden crear así:
@@ -85,4 +85,4 @@ def get_module_logger(module_name: str) -> logging.Logger:
     Returns:
         Sub-logger configurado
     """
-    return logging.getLogger(f"amapicks.{module_name}")
+    return logging.getLogger(f"gbleagues.{module_name}")

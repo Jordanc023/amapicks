@@ -23,27 +23,11 @@ class MercadoCog(commands.Cog):
 
     @commands.hybrid_command(name="abrir_mercado", description="Abrir el mercado de fichajes (Admin)")
     @check_es_admin()
-    async def cmd_abrir_mercado(self, ctx, *, equipo_objetivo: str = None):
-        """Abre el mercado globalmente o para un equipo específico."""
+    async def cmd_abrir_mercado(self, ctx):
+        """Abre el mercado globalmente."""
         await ctx.defer()
 
-        nuevo_valor = 'true'
-        mensaje_extra = ""
-
-        if equipo_objetivo:
-            equipo_encontrado, coincidencias = buscar_equipo(equipo_objetivo, self.bot.roles_equipos)
-
-            if equipo_encontrado:
-                nuevo_valor = equipo_encontrado
-                mensaje_extra = f"\n⚠️ **Solo para:** {equipo_encontrado}"
-            elif coincidencias:
-                lista = "\n".join([f"• {eq}" for eq in coincidencias[:5]])
-                await ctx.send(f"⚠️ Múltiples coincidencias:\n{lista}")
-                return
-            else:
-                await ctx.send(f"❌ No encontré el equipo **{equipo_objetivo}**. Mercado abierto globalmente.")
-
-        await abrir_mercado(nuevo_valor)
+        await abrir_mercado('true')
 
         cfg = await get_bot_config()
         rol_dt = discord.utils.get(ctx.guild.roles, name=cfg["rol_dt"])
@@ -69,11 +53,7 @@ class MercadoCog(commands.Cog):
 
         total_fichajes = await jugadores_col.count_documents({})
 
-        descripcion = f"El mercado de fichajes ha sido **HABILITADO**.{mensaje_extra}\n"
-        if nuevo_valor == 'true':
-            descripcion += f"Los {mencion} ya pueden realizar movimientos."
-        else:
-            descripcion += f"Solo el DT de **{nuevo_valor}** puede fichar."
+        descripcion = f"El mercado de fichajes ha sido **HABILITADO**.\nLos {mencion} ya pueden realizar movimientos."
 
         embed = discord.Embed(
             description=descripcion,
@@ -93,8 +73,8 @@ class MercadoCog(commands.Cog):
         embed.set_footer(text=f"Autorizado por {ctx.author.display_name}")
         embed.timestamp = datetime.now()
 
-        await ctx.send(content=mencion if nuevo_valor == 'true' else "", embed=embed)
-        logger.info(f"🟢 Mercado abierto ({nuevo_valor}) por {ctx.author.name}")
+        await ctx.followup.send(content=mencion, embed=embed)
+        logger.info(f"🟢 Mercado abierto (global) por {ctx.author.name}")
 
     @commands.hybrid_command(name="cerrar_mercado", description="Cerrar el mercado de fichajes (Admin)")
     @check_es_admin()
@@ -128,7 +108,7 @@ class MercadoCog(commands.Cog):
         embed.set_footer(text=f"Cerrado por {ctx.author.display_name}")
         embed.timestamp = datetime.now()
 
-        await ctx.send(content=mencion, embed=embed)
+        await ctx.followup.send(content=mencion, embed=embed)
         logger.info(f"🔴 Mercado cerrado por {ctx.author.name}")
 
 

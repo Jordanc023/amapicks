@@ -39,19 +39,29 @@ class BotonFicharAgenteView(View):
 
 async def autocomplete_equipos(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
     """Autocompletado para nombres de equipos."""
-    equipos = interaction.client.roles_equipos
-    current_lower = current.lower().replace('-', '').replace(' ', '')
+    try:
+        equipos = interaction.client.roles_equipos
+        current_lower = current.lower().replace('-', '').replace(' ', '')
 
-    coincidencias = []
-    for eq in equipos:
-        eq_clean = eq.lower().replace('-', '').replace(' ', '')
-        if current_lower in eq_clean or eq_clean.startswith(current_lower):
-            coincidencias.append(eq)
+        coincidencias = []
+        for eq in equipos:
+            eq_clean = eq.lower().replace('-', '').replace(' ', '')
+            if current_lower in eq_clean or eq_clean.startswith(current_lower):
+                coincidencias.append(eq)
 
-    return [
-        app_commands.Choice(name=eq, value=eq)
-        for eq in coincidencias[:25]
-    ]
+        return [
+            app_commands.Choice(name=eq, value=eq)
+            for eq in coincidencias[:25]
+        ]
+    except discord.errors.HTTPException as e:
+        # Ignorar error 40060: Interaction has already been acknowledged
+        # Esto ocurre cuando Discord envía una nueva solicitud de autocomplete
+        # antes de que la anterior termine
+        if e.code == 40060:
+            return []
+        raise
+    except Exception:
+        return []
 
 
 class JugadoresCog(commands.Cog):
@@ -259,7 +269,7 @@ class JugadoresCog(commands.Cog):
             eq_hist = evento.get('details', {}).get('equipo', '?')
             historial_list.append((fecha_str, tipo, eq_hist))
 
-        await ctx.send("🎨 `Forjando Player Card en alta definición...`", delete_after=3)
+        await ctx.followup.send("🎨 `Forjando Player Card en alta definición...`", delete_after=3)
 
         try:
             import utils_imagen
@@ -286,7 +296,7 @@ class JugadoresCog(commands.Cog):
             fecha_actual = datetime.now().strftime('%d/%m/%Y %H:%M')
             embed.set_footer(text=f"Amapicks • {fecha_actual} • Solicitado por {ctx.author.display_name}")
             
-            await ctx.send(file=file, embed=embed)
+            await ctx.followup.send(file=file, embed=embed)
         except ImportError:
             await ctx.send("❌ El motor gráfico Pillow no está instalado en el servidor.")
         except Exception as e:
@@ -385,7 +395,7 @@ class JugadoresCog(commands.Cog):
         else:
             lista_jugadores = []
 
-        await ctx.send("🎨 `Dibujando la tarjeta del equipo en alta resolución...`", delete_after=3)
+        await ctx.followup.send("🎨 `Dibujando la tarjeta del equipo en alta resolución...`", delete_after=3)
         
         try:
             import utils_imagen
@@ -407,7 +417,7 @@ class JugadoresCog(commands.Cog):
             embed.set_image(url="attachment://plantilla.png")
             embed.set_footer(text=f"Amapicks • {estado} • Solicitado por {ctx.author.display_name}")
             
-            await ctx.send(file=file, embed=embed)
+            await ctx.followup.send(file=file, embed=embed)
         except ImportError:
             await ctx.send("❌ El motor gráfico Pillow no está instalado en el servidor.\n**Admin:** Ejecute `pip install Pillow aiohttp` en la VPS.")
         except Exception as e:

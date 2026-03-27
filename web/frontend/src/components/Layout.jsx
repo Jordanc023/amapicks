@@ -33,10 +33,10 @@ const Navbar = () => {
                     {/* Logo */}
                     <Link to="/" className="flex items-center gap-2 group">
                         <div className="w-10 h-10 bg-gold-500 rounded-full flex items-center justify-center font-bold text-dark-900 border-2 border-transparent group-hover:border-white transition-all">
-                            AP
+                            GB
                         </div>
                         <span className="font-display font-bold text-xl tracking-wider text-white group-hover:text-gold-400 transition-colors">
-                            AMAPICKS FC
+                            GBLEAGUES
                         </span>
                     </Link>
 
@@ -162,7 +162,7 @@ const Layout = () => {
             <footer className="border-t border-white/5 bg-dark-900 py-8 mt-20 relative z-10">
                 <div className="max-w-7xl mx-auto px-4 text-center">
                     <p className="text-gray-600 text-sm font-medium tracking-widest uppercase">
-                        © 2026 Amapicks League. Official Partner of Haxball.
+                        © 2026 GBLEAGUES. Official Partner of Haxball.
                     </p>
                 </div>
             </footer>

@@ -1,6 +1,7 @@
 from datetime import datetime
 from database import get_collection
 from typing import Optional, Dict, Any, List
+from bson import ObjectId
 
 class AdminRepository:
     """Repositorio para separar la lógica de BBDD relacionada a la administración."""
@@ -9,6 +10,15 @@ class AdminRepository:
     async def get_equipo_by_id_or_name(equipo_id: str) -> Optional[Dict[str, Any]]:
         equipos_col = get_collection("equipos")
         query_conditions = []
+        
+        # Intentar buscar por _id (ObjectId) primero si el formato es válido
+        try:
+            if ObjectId.is_valid(equipo_id):
+                query_conditions.append({"_id": ObjectId(equipo_id)})
+        except:
+            pass
+        
+        # Fallback a búsquedas por role_id, nombre o role_name
         if equipo_id.isdigit():
             query_conditions.append({"role_id": int(equipo_id)})
         query_conditions.append({"nombre": equipo_id})
@@ -28,7 +38,7 @@ class AdminRepository:
 
     @staticmethod
     async def log_transaccion_financiera(actor: str, actor_id: str, equipo_id: str, equipo_nombre: str, dinero_movido: int, nuevo_presupuesto: int):
-        auditoria_col = get_collection("transacciones_finacieras")
+        auditoria_col = get_collection("transacciones_financieras")
         accion_txt = "inyectó" if dinero_movido > 0 else "retiró"
         monto_abs = abs(dinero_movido)
         
@@ -85,7 +95,7 @@ class AdminRepository:
 
     @staticmethod
     async def get_auditoria_logs(limit: int) -> List[Dict[str, Any]]:
-        auditoria_col = get_collection("transacciones_finacieras")
+        auditoria_col = get_collection("transacciones_financieras")
         cursor = auditoria_col.find({}).sort("timestamp", -1).limit(limit)
         logs = await cursor.to_list(length=limit)
         return logs

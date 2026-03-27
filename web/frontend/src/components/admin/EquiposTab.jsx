@@ -103,7 +103,7 @@ const EquiposTab = ({
             {/* Equipos Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {equipos.map((equipo) => {
-                    const eqId = equipo.role_id || equipo.nombre;
+                    const eqId = equipo.id || equipo._id;
                     const jugadoresCount = equipo.jugadores?.length || 0;
                     const isSelected = selectedEquipos.includes(eqId);
 

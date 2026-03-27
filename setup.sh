@@ -1,13 +1,13 @@
 #!/bin/bash
 # ============================================
-# AMAPICKS - Setup Inicial para VPS Limpia
+# GBLEAGUES - Setup Inicial para VPS Limpia
 # Ejecutar: bash setup.sh
 # ============================================
 
 set -e
 
 echo "=========================================="
-echo "  AMAPICKS - Configuración Inicial"
+echo "  GBLEAGUES - Configuración Inicial"
 echo "=========================================="
 
 # 1. Actualizar sistema
@@ -39,7 +39,7 @@ sudo npm install -g pm2
 # 6. Clonar el repositorio
 echo ""
 echo "[6/7] Clonando repositorio de GitHub..."
-cd /home/jordanvps
+cd /home/jordanvps/gbleagues
 git clone https://github.com/Jordanc023/amapicks.git
 cd amapicks
 
@@ -68,14 +68,14 @@ echo ""
 echo "PASOS FINALES (hazlos manualmente):"
 echo ""
 echo "1. Crear el .env:"
-echo "   nano /home/jordanvps/amapicks/.env"
+echo "   nano /home/jordanvps/gbleagues/.env"
 echo ""
 echo "2. Pegar esto en el .env:"
 echo "   DISCORD_TOKEN=tu_token_aqui"
 echo "   MONGO_URI=tu_mongo_uri_aqui"
 echo ""
 echo "3. Hacer deploy.sh ejecutable:"
-echo "   chmod +x deploy.sh"
+echo "   chmod +x deploy-domain.sh"
 echo ""
 echo "4. Iniciar servicios:"
 echo "   pm2 start ecosystem.config.js"

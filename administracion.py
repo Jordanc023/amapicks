@@ -16,8 +16,8 @@ from discord.ext import commands, tasks
 from discord.ui import View, Button, Select
 
 from config import (
-    AuditAction, CANAL_AGENTES_LIBRES_ID, CANAL_LOGS_ID, BACKUP_INTERVAL_HOURS,
-    DEFAULT_SERVER_CONFIG
+    AuditAction, CANAL_AGENTES_LIBRES_ID, CANAL_BACKUPS_ID, CANAL_LOGS_ID,
+    BACKUP_INTERVAL_HOURS, DEFAULT_SERVER_CONFIG
 )
 from database import (
     get_db, get_collection, log_action,
@@ -258,9 +258,9 @@ class AdministracionCog(commands.Cog):
             await ctx.send(f"❌ Error al crear backup: {e}")
             logger.error(f"Error en backup_manual: {e}", exc_info=True)
 
-    @commands.hybrid_command(name="sync", description="Sincronizar comandos de barra en el servidor actual")
+    @commands.hybrid_command(name="sync_old", description="Sincronizar comandos de barra en el servidor actual (legacy)")
     @check_es_admin()
-    async def sync(self, ctx):
+    async def sync_old(self, ctx):
         """Sincroniza los comandos de barra con el servidor actual."""
         await ctx.send("🔄 Sincronizando comandos de barra...")
         try:

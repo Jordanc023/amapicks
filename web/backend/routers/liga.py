@@ -15,10 +15,14 @@ async def get_equipos():
     equipos_col = get_collection("equipos")
     jugadores_col = get_collection("jugadores")
     
-    # 1. Obtener equipos
-    equipos = await equipos_col.find({}, {"_id": 0}).to_list(100)
+    # 1. Obtener equipos (incluyendo _id)
+    equipos_cursor = equipos_col.find({})
+    equipos = []
+    async for equipo in equipos_cursor:
+        equipo["id"] = str(equipo.pop("_id"))
+        equipos.append(equipo)
     
-    # 2. Obtener todos los jugadores con equipo
+    # 2. Obtener todos los jugadores con equipo (excluyendo _id)
     jugadores = await jugadores_col.find({}, {"_id": 0}).to_list(1000)
     
     # 3. Agrupar jugadores por equipo

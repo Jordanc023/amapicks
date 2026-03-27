@@ -17,7 +17,7 @@ except RuntimeError:
 # Importar configuración centralizada
 from config import (
     TOKEN, ROL_DE_DT, ROLES_ADMIN,
-    AUTO_SYNC_INTERVAL_HOURS, CANAL_LOGS_ID, CANAL_OFERTAS_ID
+    AUTO_SYNC_INTERVAL_HOURS, CANAL_LOGS_ID, CANAL_OFERTAS_ID, CANAL_ANUNCIOS_ID
 )
 from database import get_collection, init_db
 from logger import log, get_module_logger
@@ -118,7 +118,11 @@ class LigaBot(commands.Bot):
                 description=f"❌ **Error:** {error}",
                 color=discord.Color.red()
             )
-            await ctx.send(embed=embed, delete_after=15)
+            # Verificar si la interacción ya fue respondida (después de ctx.defer)
+            if ctx.interaction and ctx.interaction.response.is_done():
+                await ctx.followup.send(embed=embed, delete_after=15)
+            else:
+                await ctx.send(embed=embed, delete_after=15)
         except discord.HTTPException:
             pass
 
@@ -334,6 +338,52 @@ class LigaBot(commands.Bot):
             
             # 2. Leer comandos remotos pendientes
             command_doc = await status_col.find_one({'_id': 'bot_commands'})
+            
+            # 2.1 Detectar FULL RESET desde el panel web
+            if command_doc and command_doc.get('force_full_reset'):
+                logger.info("🔄 FULL RESET detectado desde panel web. Limpiando caché del bot...")
+                try:
+                    # Limpiar caché de roles de equipos
+                    self.roles_equipos.clear()
+                    
+                    # Recargar roles de equipos desde Discord (vacío porque equipos están en BD)
+                    guild = self.guilds[0] if self.guilds else None
+                    if guild:
+                        self.roles_equipos = [role.name for role in guild.roles if role.name.startswith('-')]
+                    
+                    logger.info(f"✅ Caché de equipos limpiada. Roles actuales: {len(self.roles_equipos)}")
+                    
+                    # Limpiar lista de agentes libres del bot si existe
+                    if hasattr(self, 'agentes_libres'):
+                        self.agentes_libres.clear()
+                        logger.info("✅ Caché de agentes libres limpiada")
+                    
+                    # Anunciar en canal de sistema si existe
+                    from config import CANAL_ANUNCIOS_ID
+                    canal_sistema = self.get_channel(CANAL_ANUNCIOS_ID)
+                    if canal_sistema:
+                        embed = discord.Embed(
+                            title="🔄 Sistema Reiniciado",
+                            description="El sistema ha sido puesto en **CERO** desde el panel de administración web.\n\n" +
+                                       "✅ Todas las estadísticas han sido reiniciadas\n" +
+                                       "✅ Todos los jugadores están ahora en Agentes Libres\n" +
+                                       "✅ Los presupuestos han sido reseteados",
+                            color=discord.Color.orange(),
+                            timestamp=datetime.utcnow()
+                        )
+                        embed.set_footer(text="Sincronización automática Bot ↔ Web")
+                        await canal_sistema.send(embed=embed)
+                        
+                except Exception as reset_e:
+                    logger.error(f"❌ Error durante limpieza de caché del bot: {reset_e}")
+                finally:
+                    # Limpiar la bandera para no repetir
+                    await status_col.update_one(
+                        {'_id': 'bot_commands'},
+                        {'$set': {'force_full_reset': False, 'full_reset_processed_at': datetime.utcnow()}}
+                    )
+            
+            # 2.2 Detectar sync de comandos (comportamiento existente)
             if command_doc and command_doc.get('force_sync'):
                 logger.info("⚡ Comando remoto recibido: Forzando Sincronización de Slash Commands...")
                 try:
@@ -571,25 +621,30 @@ class LigaBot(commands.Bot):
             await pendientes_col.delete_one({"_id": club_pendiente["_id"]})
             logger.info(f"🏗️ Club '{nombre_equipo}' fundado y registrado correctamente (Automático).")
 
-            # 6. Anunciar Nacimiento de Club
-            canal_anuncios = discord.utils.get(guild.text_channels, name="anuncios")
-            if not canal_anuncios:
-                for channel in guild.text_channels:
-                    if "general" in channel.name.lower():
-                        canal_anuncios = channel
-                        break
+            # 6. Anunciar Nacimiento de Club en canal de anuncios (por ID)
+            canal_anuncios = self.get_channel(CANAL_ANUNCIOS_ID)
             
             if canal_anuncios:
+                # Nombre del equipo sin el prefijo "-" para el mensaje
+                nombre_equipo_limpio = nombre_equipo.lstrip('-')
+                
                 embed = discord.Embed(
-                    title="🎉 ¡UN NUEVO CLUB NACE EN LA LIGA! 🎉",
-                    description=f"Demos la bienvenida al **{nombre_equipo}**.\n\n"
-                                f"Su Director Técnico y Fundador <@{discord_id}> acaba de abrir "
-                                f"las instalaciones y está listo para fichar jugadores.",
+                    title="📄 NOTA DE PRENSA: NUEVA FRANQUICIA",
+                    description=(
+                        f"**EL CLUB {nombre_equipo_limpio} SE UNE A LA COMPETICIÓN**\n\n"
+                        f"El Ministerio de GBLEAGUES hace oficial la entrada del club "
+                        f"**{nombre_equipo_limpio}** a la liga. Bajo la gestión de su fundador "
+                        f"<@{discord_id}>, el club inicia operaciones de forma inmediata.\n\n"
+                        f"🏟️ **Sede:** Instalaciones {nombre_equipo_limpio} (Recién inauguradas)\n"
+                        f"📋 **Bolsa de Trabajo:** Agentes libres, reportarse con la dirección técnica.\n\n"
+                        f"✅ Autenticado por el sistema de la Liga."
+                    ),
                     color=rol_equipo.color if rol_equipo else discord.Color.gold()
                 )
                 if logo_url:
                     embed.set_thumbnail(url=logo_url)
-                embed.set_footer(text="Aprobado por el Ministerio de AMAPICKS", icon_url=self.user.display_avatar.url)
+                embed.set_footer(text="Ministerio de GBLEAGUES", icon_url=self.user.display_avatar.url)
+                embed.timestamp = datetime.utcnow()
                 
                 await canal_anuncios.send(embed=embed)
 

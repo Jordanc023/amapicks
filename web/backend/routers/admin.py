@@ -531,7 +531,7 @@ def _generar_fixture_d1(equipos: List[str]):
 
 @router.post("/generar_calendario_liga")
 async def generar_calendario_liga(data: GenerarCalendario, admin_user: dict = Depends(require_admin)):
-    """Genera automáticamente todo el calendario de liga (round-robin)."""
+    """Genera automáticamente todo el calendario de liga (round-robin, todos vs todos)."""
     equipos_col = get_collection("equipos")
     partidos_col = get_collection("partidos")
     config_liga_col = get_collection("config_liga")
@@ -544,13 +544,8 @@ async def generar_calendario_liga(data: GenerarCalendario, admin_user: dict = De
     if len(equipos_nombres) < 2:
         raise HTTPException(status_code=400, detail="Se necesitan al menos 2 equipos activos")
     
-    if data.tipo_liga == "d1":
-        if len(equipos_nombres) != 8:
-            raise HTTPException(status_code=400, detail="La Liga D1 requiere exactamente 8 equipos")
-        fixture = _generar_fixture_d1(equipos_nombres)
-    else:
-        # Generar fixture
-        fixture = _generar_fixture_round_robin(equipos_nombres)
+    # Generar fixture round-robin
+    fixture = _generar_fixture_round_robin(equipos_nombres)
     
     # Parse fecha inicio
     try:
@@ -563,12 +558,7 @@ async def generar_calendario_liga(data: GenerarCalendario, admin_user: dict = De
     for jornada_data in fixture:
         jornada_num = jornada_data["jornada"]
         
-        # Pausa de copa después de la jornada 7 para D1
-        dias_extra = 0
-        if data.tipo_liga == "d1" and jornada_num > 7:
-            dias_extra = data.dias_pausa_copa
-            
-        fecha_jornada = fecha_inicio + datetime.timedelta(days=(jornada_num - 1) * data.dias_entre_jornadas + dias_extra)
+        fecha_jornada = fecha_inicio + datetime.timedelta(days=(jornada_num - 1) * data.dias_entre_jornadas)
         
         for partido in jornada_data["partidos"]:
             fecha_hora = datetime.combine(
@@ -963,6 +953,107 @@ async def reset_season(admin_user: dict = Depends(require_admin)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/system/full-reset")
+async def full_reset(admin_user: dict = Depends(require_admin)):
+    """Reset COMPLETO: Deja en 0 TODAS las estadísticas, economía y datos de juego.
+    Mantiene estructuras, equipos (nombres, DTs), jugadores (datos personales), y configuraciones del sistema.
+    Elimina: partidos, tabla, transacciones, stats, presupuestos, precios de jugadores, ofertas.
+    """
+    try:
+        # 1. Partidos y clasificación
+        partidos_deleted = await get_collection("partidos").delete_many({})
+        tabla_deleted = await get_collection("tabla_posiciones").delete_many({})
+        
+        # 2. Reset de economía de equipos (presupuesto a 0)
+        equipos_reset = await get_collection("equipos").update_many(
+            {}, 
+            {"$set": {"presupuesto": 0}}
+        )
+        
+        # 3. Reset de jugadores: precio/cláusula a 0, stats a 0, sin equipo -> agentes libres
+        jugadores_col = get_collection("jugadores")
+        agentes_col = get_collection("agentes_libres")
+        
+        # Obtener todos los jugadores con equipo para moverlos a agentes libres
+        jugadores_con_equipo = await jugadores_col.find({}).to_list(None)
+        
+        for jugador in jugadores_con_equipo:
+            # Mover a agentes libres
+            jugador_data = {
+                "discord_id": jugador["discord_id"],
+                "nombre": jugador["nombre"],
+                "posicion": jugador.get("posicion", "MC"),
+                "precio": 0,
+                "clausula": 0,
+                "avatar_url": jugador.get("avatar_url", ""),
+                "media": jugador.get("media", 75),
+                "baneado": jugador.get("baneado", False),
+                "motivo_ban": jugador.get("motivo_ban", None),
+                # Stats totales a 0
+                "goles_totales": 0,
+                "asistencias_totales": 0,
+                "mvps_totales": 0,
+                "amarillas_totales": 0,
+                "rojas_totales": 0,
+                "estadisticas_temporada": {
+                    "goles": 0, "asistencias": 0, "mvps": 0, "amarillas": 0, "rojas": 0
+                }
+            }
+            await agentes_col.replace_one(
+                {"discord_id": jugador["discord_id"]},
+                jugador_data,
+                upsert=True
+            )
+        
+        # Vaciar colección de jugadores (todos pasan a agentes libres)
+        await jugadores_col.delete_many({})
+        
+        # 4. Limpiar transacciones y auditoría
+        trans_deleted = await get_collection("transacciones_financieras").delete_many({})
+        
+        # 5. Limpiar ofertas pendientes
+        ofertas_deleted = await get_collection("ofertas_pendientes").delete_many({})
+        
+        # 6. Reset de ligas a estado inicial (sin jornada actual, sin equipos asignados)
+        await get_collection("ligas").update_many(
+            {},
+            {"$set": {
+                "jornada_actual": 1,
+                "estado": "configuracion",
+                "equipos_inscritos": [],
+                "total_equipos": 0
+            }}
+        )
+        
+        # 7. Limpiar config de liga actual
+        await get_collection("config_liga").delete_many({})
+        
+        # 8. Setear bandera para que el bot de Discord limpie su caché
+        await get_collection("config_col").update_one(
+            {"_id": "bot_commands"},
+            {"$set": {
+                "force_full_reset": True,
+                "full_reset_at": datetime.utcnow(),
+                "full_reset_by": admin_user.get("sub", "admin_web")
+            }},
+            upsert=True
+        )
+        
+        return {
+            "success": True,
+            "message": "🔄 RESET COMPLETO ejecutado. Todas las stats y economía están en 0.",
+            "detalles": {
+                "partidos_eliminados": partidos_deleted.deleted_count,
+                "tabla_reseteada": tabla_deleted.deleted_count,
+                "equipos_reset_presupuesto": equipos_reset.modified_count,
+                "jugadores_liberados": len(jugadores_con_equipo),
+                "transacciones_eliminadas": trans_deleted.deleted_count,
+                "ofertas_eliminadas": ofertas_deleted.deleted_count
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en reset completo: {str(e)}")
+
 @router.post("/system/nuke")
 async def nuke_database(data: NukeConfirm, admin_user: dict = Depends(require_admin)):
     """Peligro inminente: Purgar toda la base de datos principal."""
@@ -972,7 +1063,7 @@ async def nuke_database(data: NukeConfirm, admin_user: dict = Depends(require_ad
     try:
         collections_to_nuke = [
             "jugadores", "equipos", "partidos", "agentes_libres", 
-            "transacciones_finacieras", "tabla_posiciones", "ofertas_pendientes"
+            "transacciones_financieras", "tabla_posiciones", "ofertas_pendientes"
         ]
         
         for coll_name in collections_to_nuke:
@@ -995,7 +1086,7 @@ async def purge_logs(admin_user: dict = Depends(require_admin)):
         # Eliminar auditoría con más de 60 días
         cutoff_date = datetime.now() - timedelta(days=60)
         
-        fin_res = await get_collection("transacciones_finacieras").delete_many({"timestamp": {"$lt": cutoff_date}})
+        fin_res = await get_collection("transacciones_financieras").delete_many({"timestamp": {"$lt": cutoff_date}})
         aud_res = await get_collection("log_auditoria").delete_many({"timestamp": {"$lt": cutoff_date}})
         
         total_deleted = fin_res.deleted_count + aud_res.deleted_count

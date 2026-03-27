@@ -997,9 +997,8 @@ def _generar_fixture_d1_liga(equipos_nombres: List[str], liga_id: str):
 @router.post("/ligas/{liga_id}/generar-fixture")
 async def generar_fixture_liga(liga_id: str, body: GenerarFixtureLigaBody):
     """
-    Genera el fixture para una liga (unificado con el antiguo Asistente de Temporada).
-    - estandar: ida y vuelta todos contra todos (cualquier nº par/impar de equipos).
-    - d1: ida y vuelta con pausa de copa tras la ida (requiere exactamente 8 equipos).
+    Genera el fixture para una liga usando formato round-robin (todos contra todos, ida y vuelta).
+    La pausa de copa se controla desde la configuración de la liga (jornada_paron_copa).
     """
     ligas_col = get_collection("ligas")
     equipos_col = get_collection("equipos")
@@ -1020,14 +1019,9 @@ async def generar_fixture_liga(liga_id: str, body: GenerarFixtureLigaBody):
         )
 
     equipos_nombres = [eq["nombre"] for eq in equipos_docs]
-    tipo = (body.tipo_liga or "estandar").lower()
-
-    if tipo == "d1":
-        if len(equipos_nombres) != 8:
-            raise HTTPException(status_code=400, detail="La Liga D1 requiere exactamente 8 equipos en la liga")
-        fixture = _generar_fixture_d1_liga(equipos_nombres, liga_id)
-    else:
-        fixture = _generar_fixture_round_robin_liga(equipos_nombres, liga_id)
+    
+    # Siempre usar round robin estándar
+    fixture = _generar_fixture_round_robin_liga(equipos_nombres, liga_id)
 
     try:
         fecha_base = datetime.strptime(body.fecha_inicio, "%Y-%m-%d")
@@ -1037,12 +1031,20 @@ async def generar_fixture_liga(liga_id: str, body: GenerarFixtureLigaBody):
     dias_entre = body.dias_entre_jornadas
     hora_default = body.hora_default
     partidos_creados = 0
+    
+    # Obtener jornada de parón desde la configuración de la liga
+    jornada_paron = liga.get("jornada_paron_copa", 11)
+    mitad_jornadas = len(fixture) // 2
 
     for jornada_data in fixture:
         jornada_num = jornada_data["jornada"]
         dias_extra = 0
-        if tipo == "d1" and jornada_num > 7:
-            dias_extra = body.dias_pausa_copa
+        
+        # Si estamos después de la jornada de parón, añadir días extra (pausa de copa)
+        if jornada_num > jornada_paron and jornada_num <= mitad_jornadas:
+            # Aplicar días de pausa desde el body o default 7
+            dias_extra = body.dias_pausa_copa if hasattr(body, 'dias_pausa_copa') else 7
+            
         fecha_jornada = fecha_base + timedelta(
             days=(jornada_num - 1) * dias_entre + dias_extra
         )
@@ -1084,7 +1086,7 @@ async def generar_fixture_liga(liga_id: str, body: GenerarFixtureLigaBody):
             "partidos_generados": partidos_creados,
             "playoffs_habilitados": body.playoffs_habilitados,
             "clasificados_playoffs": body.clasificados_playoffs,
-            "tipo_fixture": tipo
+            "tipo_fixture": "todos_contra_todos"
         }}
     )
 
@@ -1119,7 +1121,8 @@ async def generar_fixture_liga(liga_id: str, body: GenerarFixtureLigaBody):
         "jornadas_ida": total_jornadas // 2,
         "jornadas_vuelta": total_jornadas // 2,
         "partidos_creados": partidos_creados,
-        "tipo_liga": tipo,
+        "formato": "todos_contra_todos",
+        "jornada_paron_copa": jornada_paron,
         "fixture_preview": fixture[:2]
     }
 

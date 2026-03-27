@@ -45,7 +45,7 @@ class EquiposCog(commands.Cog):
 
         # 1. Verificar permisos
         if not es_admin(ctx.author):
-            await ctx.send("❌ No tienes permisos para crear equipos.")
+            await ctx.followup.send("❌ No tienes permisos para crear equipos.")
             return
 
         # 2. Parseo inteligente (Separar nombre y color)
@@ -65,20 +65,20 @@ class EquiposCog(commands.Cog):
                 nombre = " ".join(partes[:-1])
 
         if not nombre.strip():
-            await ctx.send("⚠️ Debes escribir el nombre del equipo.\nEjemplo: `/crear Manchester Rojo`")
+            await ctx.followup.send("⚠️ Debes escribir el nombre del equipo.\nEjemplo: `/crear Manchester Rojo`")
             return
 
         # 3. Verificar si ya existe
         equipos_col = get_collection('equipos')
 
         if nombre in self.bot.roles_equipos:
-            await ctx.send(f"⚠️ El equipo **{nombre}** ya existe en la base de datos.")
+            await ctx.followup.send(f"⚠️ El equipo **{nombre}** ya existe en la base de datos.")
             return
 
         # 4. Verificar si el rol ya existe en Discord
         rol_existente = discord.utils.get(ctx.guild.roles, name=nombre)
         if rol_existente:
-            await ctx.send(f"⚠️ Ya existe un rol llamado **{nombre}** en el servidor. Lo registraré en la BD.")
+            await ctx.followup.send(f"⚠️ Ya existe un rol llamado **{nombre}** en el servidor. Lo registraré en la BD.")
 
             await equipos_col.update_one(
                 {'nombre': nombre},
@@ -86,7 +86,7 @@ class EquiposCog(commands.Cog):
                 upsert=True
             )
             self.bot.roles_equipos.append(nombre)
-            await ctx.send(f"✅ Equipo **{nombre}** registrado correctamente.")
+            await ctx.followup.send(f"✅ Equipo **{nombre}** registrado correctamente.")
             return
 
         try:
@@ -125,12 +125,12 @@ class EquiposCog(commands.Cog):
             embed.add_field(name="Color", value=color_hex, inline=True)
             embed.set_footer(text=f"Admin: {ctx.author.display_name}")
 
-            await ctx.send(embed=embed)
+            await ctx.followup.send(embed=embed)
 
         except discord.Forbidden:
-            await ctx.send("❌ No tengo permisos para crear roles.")
+            await ctx.followup.send("❌ No tengo permisos para crear roles.")
         except Exception as e:
-            await ctx.send(f"❌ Error al crear el equipo: {e}")
+            await ctx.followup.send(f"❌ Error al crear el equipo: {e}")
             logger.error(f"Error en crear_equipo: {e}", exc_info=True)
 
 

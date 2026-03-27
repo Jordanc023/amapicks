@@ -92,7 +92,7 @@ export default function useAdminData() {
             // Inicializar presupuestos
             const budgets = {};
             eqRes.forEach(eq => {
-                const id = eq.role_id || eq.nombre;
+                const id = eq.id || eq._id;
                 budgets[id] = eq.presupuesto || 0;
             });
             setPresupuestos(budgets);
@@ -466,6 +466,35 @@ export default function useAdminData() {
         }
     };
 
+    const handleFullReset = async () => {
+        if (!window.confirm("🔄 RESET COMPLETO: Esto dejará en CERO:\n\n" +
+            "❌ Todos los partidos\n" +
+            "❌ Tabla de posiciones\n" +
+            "❌ Presupuestos de equipos (0$)\n" +
+            "❌ Todos los jugadores pasan a Agentes Libres\n" +
+            "❌ Precios y cláusulas de jugadores (0$)\n" +
+            "❌ Todas las estadísticas (goles, asistencias, MVP, etc.)\n" +
+            "❌ Historial de transacciones\n" +
+            "❌ Ofertas pendientes\n\n" +
+            "✅ Se MANTIENEN: Equipos (nombres, DTs), datos de jugadores, configuraciones\n\n" +
+            "¿Estás SEGURO?")) return;
+        let pass = window.prompt("Escribe 'FULLRESET' para confirmar:");
+        if (pass !== "FULLRESET") {
+            alert("❌ Acción cancelada.");
+            return;
+        }
+        setSaving('full-reset');
+        try {
+            const res = await ligaService.fullReset();
+            alert(`✅ ${res.message}\n\nDetalles:\n• ${res.detalles.partidos_eliminados} partidos\n• ${res.detalles.equipos_reset_presupuesto} equipos a $0\n• ${res.detalles.jugadores_liberados} jugadores liberados\n• ${res.detalles.transacciones_eliminadas} transacciones`);
+            await loadData();
+        } catch (error) {
+            alert(`❌ Error: ${error.response?.data?.detail || error.message}`);
+        } finally {
+            setSaving(null);
+        }
+    };
+
     const handleResetSeason = async () => {
         if (!window.confirm("🔪 ADVERTENCIA: Esta acción eliminará toda la historia de esta edición (Partidos, Tabla de posiciones, MVP/Rojas per capita en Jugadores).\n\n¿Estás SEGURO de que deseas Iniciar Nueva Temporada?")) return;
         let pass = window.prompt("Por favor, escribe 'RESETEAR' para confirmar esta acción irreversible:");
@@ -649,6 +678,7 @@ export default function useAdminData() {
         // Maintenance handlers
         handleBackup,
         handleResetSeason,
+        handleFullReset,
         handleNuke,
         handlePurgeLogs,
         handleSaveGlobalConfig,

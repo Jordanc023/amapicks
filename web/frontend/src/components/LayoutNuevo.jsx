@@ -18,10 +18,10 @@ const LayoutNuevo = () => {
                     {/* Logo */}
                     <Link to="/" className="flex items-center gap-2 group ml-20">
                         <div className="w-10 h-10 bg-gold-500 rounded-full flex items-center justify-center font-bold text-dark-900 border-2 border-transparent group-hover:border-white transition-all">
-                            AP
+                            GB
                         </div>
                         <span className="font-display font-bold text-xl tracking-wider text-white group-hover:text-gold-400 transition-colors">
-                            AMAPICKS FC
+                            GBLEAGUES
                         </span>
                     </Link>
 

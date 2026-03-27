@@ -125,7 +125,7 @@ async def realizar_fichaje(fichaje: FichajeRequest):
     )
 
     # E. Registrar auditoría financiera
-    auditoria_col = get_collection("transacciones_finacieras")
+    auditoria_col = get_collection("transacciones_financieras")
     await auditoria_col.insert_one({
         "timestamp": datetime.utcnow().isoformat(),
         "tipo": "TRANSFERENCIA",

@@ -66,6 +66,9 @@ CANAL_BACKUPS_ID = 1462261514433204322         # Reemplazar con ID real del cana
 # Notificaciones de aceptar/rechazar/expirar van aquí
 CANAL_OFERTAS_ID = 1485416456614187111
 
+# Canal para anuncios de nuevos equipos
+CANAL_ANUNCIOS_ID = 1477719914721579038  # ID real del canal de anuncios
+
 # ============================================
 # CONFIGURACIÓN DEL JUEGO
 # ============================================

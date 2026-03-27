@@ -93,6 +93,7 @@ const Admin = () => {
         handleSaveGlobalConfig,
         handleBackup,
         handleResetSeason,
+        handleFullReset,
         handleNuke,
         handlePurgeLogs,
         // Utils
@@ -254,6 +255,7 @@ const Admin = () => {
                         handleSaveGlobalConfig={handleSaveGlobalConfig}
                         handleBackup={handleBackup}
                         handleResetSeason={handleResetSeason}
+                        handleFullReset={handleFullReset}
                         handleNuke={handleNuke}
                         handlePurgeLogs={handlePurgeLogs}
                         globalConfig={globalConfig}

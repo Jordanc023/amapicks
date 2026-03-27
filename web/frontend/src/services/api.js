@@ -280,6 +280,11 @@ export const ligaService = {
         return response.data;
     },
 
+    fullReset: async () => {
+        const response = await api.post('/admin/system/full-reset');
+        return response.data;
+    },
+
     nukeDatabase: async (confirmationText) => {
         const response = await api.post('/admin/system/nuke', { confirmation_text: confirmationText });
         return response.data;
