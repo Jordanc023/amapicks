@@ -64,6 +64,13 @@ cd ../..
 echo ""
 echo "[4/7] Configurando Nginx..."
 
+# Instalar Nginx si no está instalado
+if ! command -v nginx &> /dev/null; then
+    echo "   📦 Instalando Nginx..."
+    sudo apt update
+    sudo apt install -y nginx
+fi
+
 # Crear directorios de Nginx si no existen
 sudo mkdir -p /etc/nginx/sites-available
 sudo mkdir -p /etc/nginx/sites-enabled
