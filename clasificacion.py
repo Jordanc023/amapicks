@@ -63,7 +63,7 @@ class ClasificacionCog(commands.Cog):
                 description="```\n  Sin equipos registrados en la liga activa.\n```",
                 color=0xFFD700,
             )
-            await ctx.followup.send(embed=embed)
+            await ctx.send(embed=embed)
             return
 
         # Obtener color del líder desde BD
@@ -154,7 +154,7 @@ class ClasificacionCog(commands.Cog):
             icon_url=ctx.author.display_avatar.url,
         )
         
-        await ctx.followup.send(embed=embed_top)
+        await ctx.send(embed=embed_top)
 
 
 async def setup(bot):

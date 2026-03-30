@@ -492,12 +492,13 @@ class ConfirmacionClausulazoView(View):
 class OfertaFichajeView(View):
     """Vista interactiva enviada por DM a un agente libre para aceptar/rechazar una oferta de fichaje."""
 
-    def __init__(self, bot, ctx, jugador: discord.Member, equipo_dt: str):
+    def __init__(self, bot, ctx, jugador: discord.Member, equipo_dt: str, monto: int):
         super().__init__(timeout=600)  # 10 minutos para agentes libres
         self.bot = bot
         self.ctx = ctx
         self.jugador = jugador
         self.equipo_dt = equipo_dt
+        self.monto = monto
         self.respondido = False
 
     @discord.ui.button(label="✅ Firmar Contrato", style=discord.ButtonStyle.green)
@@ -533,6 +534,13 @@ class OfertaFichajeView(View):
             jugadores_col = get_collection('jugadores')
             agentes_col = get_collection('agentes_libres')
 
+            equipos_col = get_collection('equipos')
+            # Descontar presupuesto al equipo comprador
+            await equipos_col.update_one(
+                {'nombre': self.equipo_dt},
+                {'$inc': {'presupuesto': -self.monto}}
+            )
+
             # Actualizar BD: agregar jugador al equipo
             await jugadores_col.update_one(
                 {'discord_id': str(self.jugador.id)},
@@ -541,6 +549,7 @@ class OfertaFichajeView(View):
                     'nombre': self.jugador.name,
                     'equipo': self.equipo_dt,
                     'avatar_url': str(self.jugador.display_avatar.url),
+                    'monto_fichaje': self.monto,
                     'fecha_fichaje': datetime.now().isoformat()
                 }},
                 upsert=True
@@ -680,40 +689,23 @@ class FichajesCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # ============================================
-    # COMANDO: /fichar
-    # ============================================
-
-    @commands.hybrid_command(name="fichar", description="Enviar oferta de fichaje a un jugador")
-    @app_commands.describe(
-        jugador="El jugador que quieres fichar",
-        monto="Monto de la oferta (obligatorio si el jugador pertenece a otro equipo)"
-    )
-    async def fichar(self, ctx, jugador: discord.Member, monto: int = None):
-        """
-        Envía una oferta de fichaje a un jugador.
-        
-        Tres escenarios posibles:
-        A) Agente Libre → oferta directa al jugador (sin monto)
-        B) Jugador en otro equipo → oferta al DT del equipo vendedor (con monto)
-        C) Clausulazo → monto >= cláusula, el jugador decide (no el DT)
-        """
-        await ctx.defer()
-
+    async def _validar_condiciones_fichaje(self, ctx, jugador):
+        """Validaciones comunes para todos los comandos del mercado."""
         # 1. Verificar que sea DT
+        import config
         es_dt = any(rol.name == config.ROL_DE_DT for rol in ctx.author.roles)
         if not es_dt:
-            await ctx.followup.send("❌ Solo los **Directores Técnicos** pueden usar este comando.")
-            return
+            await ctx.send("❌ Solo los **Directores Técnicos** pueden usar este comando.")
+            return False, None, None, False
 
         # 2. Verificar canal de ofertas
         if ctx.channel.id != config.CANAL_OFERTAS_ID:
             canal_ofertas = self.bot.get_channel(config.CANAL_OFERTAS_ID)
             if canal_ofertas:
-                await ctx.followup.send(f"❌ Este comando solo puede usarse en {canal_ofertas.mention}.", delete_after=10)
+                await ctx.send(f"❌ Este comando solo puede usarse en {canal_ofertas.mention}.", delete_after=10)
             else:
-                await ctx.followup.send("❌ Canal de ofertas no configurado.", delete_after=10)
-            return
+                await ctx.send("❌ Canal de ofertas no configurado.", delete_after=10)
+            return False, None, None, False
 
         # 3. Encontrar equipo del DT
         equipo_dt = None
@@ -723,35 +715,36 @@ class FichajesCog(commands.Cog):
                 break
 
         if not equipo_dt:
-            await ctx.followup.send("❌ No se encontró tu equipo.")
-            return
+            await ctx.send("❌ No se encontró tu equipo.")
+            return False, None, None, False
 
-        # 4. Verificar mercado abierto para este equipo
+        # 4. Verificar mercado abierto
+        from database import mercado_abierto_para, contar_jugadores_equipo, tiene_oferta_pendiente, tiene_oferta_de_otro_dt
         mercado_ok = await mercado_abierto_para(equipo_dt)
         if not mercado_ok:
-            await ctx.followup.send("❌ El mercado de fichajes está **cerrado**.")
-            return
+            await ctx.send("❌ El mercado de fichajes está **cerrado**.")
+            return False, None, None, False
 
         # 5. Validaciones de jugador
         if jugador.id == ctx.author.id:
-            await ctx.followup.send("❌ No puedes ficharte a ti mismo.")
-            return
+            await ctx.send("❌ No puedes lanzarte una oferta a ti mismo.")
+            return False, None, None, False
 
         if jugador.bot:
-            await ctx.followup.send("❌ No puedes fichar a un bot.")
-            return
+            await ctx.send("❌ No puedes lanzar ofertas a un bot.")
+            return False, None, None, False
 
         # 6. Verificar ofertas duplicadas
         if await tiene_oferta_pendiente(str(ctx.author.id), str(jugador.id)):
-            await ctx.followup.send("⚠️ Ya tienes una oferta pendiente con este jugador.")
-            return
+            await ctx.send("⚠️ Ya tienes una oferta pendiente con este jugador.")
+            return False, None, None, False
 
         otro_equipo = await tiene_oferta_de_otro_dt(str(jugador.id), str(ctx.author.id))
         if otro_equipo:
-            await ctx.followup.send(f"⚠️ Otro equipo (**{otro_equipo}**) ya tiene una oferta pendiente con este jugador.")
-            return
+            await ctx.send(f"⚠️ Otro equipo (**{otro_equipo}**) ya tiene una oferta pendiente con este jugador.")
+            return False, None, None, False
 
-        # 7. Determinar tipo de fichaje
+        # 7. Determinar estado del jugador
         es_agente_libre = any(rol.name == config.ROL_AGENTE_LIBRE for rol in jugador.roles)
         equipo_jugador = None
         for rol in jugador.roles:
@@ -759,308 +752,275 @@ class FichajesCog(commands.Cog):
                 equipo_jugador = rol.name
                 break
 
-        # Verificar que no sea del mismo equipo
         if equipo_jugador == equipo_dt:
-            await ctx.followup.send("❌ Ese jugador ya pertenece a tu equipo.")
-            return
+            await ctx.send("❌ Ese jugador ya pertenece a tu equipo.")
+            return False, None, None, False
 
         # 8. Verificar plantilla no llena
         cantidad = await contar_jugadores_equipo(equipo_dt)
         if cantidad >= config.LIMITE_PLANTILLA:
-            await ctx.followup.send(f"❌ Tu plantilla está llena ({cantidad}/{config.LIMITE_PLANTILLA}).")
-            return
+            await ctx.send(f"❌ Tu plantilla está llena ({cantidad}/{config.LIMITE_PLANTILLA}).")
+            return False, None, None, False
 
-        # ===== CASO A: AGENTE LIBRE (sin monto necesario) =====
-        if es_agente_libre or not equipo_jugador:
-            # Crear oferta pendiente con TTL de 10 minutos
-            await crear_oferta_pendiente(str(ctx.author.id), str(jugador.id), equipo_dt, expira_minutos=10)
+        return True, equipo_dt, equipo_jugador, (es_agente_libre or equipo_jugador is None)
 
-            # Crear View y enviar DM al jugador
-            view = OfertaFichajeView(self.bot, ctx, jugador, equipo_dt)
 
-            embed_dm = discord.Embed(
-                title="� OFERTA DE FICHAJE",
-                description=(
-                    f"¡El **{equipo_dt}** quiere ficharte!\n\n"
-                    f"👤 **DT:** {ctx.author.display_name}\n"
-                    f"🛡️ **Equipo:** {equipo_dt}\n\n"
-                    f"Tienes **10 minutos** para responder."
-                ),
-                color=discord.Color.blue()
-            )
-            embed_dm.set_thumbnail(url=ctx.author.display_avatar.url)
-            embed_dm.set_footer(text="Usa los botones para responder")
-
-            try:
-                await jugador.send(embed=embed_dm, view=view)
-
-                # Obtener info del equipo comprador para el embed
-                equipos_col = get_collection('equipos')
-                equipo_db = await equipos_col.find_one({'nombre': equipo_dt})
-                
-                color_equipo = discord.Color.blue()
-                escudo_url = None
-                if equipo_db:
-                    color_hex = equipo_db.get('color', '#3498db')
-                    try:
-                        color_equipo = int(color_hex.lstrip('#'), 16)
-                    except ValueError:
-                        color_equipo = discord.Color.blue()
-                    escudo_url = equipo_db.get('escudo_url')
-
-                # Embed profesional en canal de fichajes
-                canal_noticias = self.bot.get_channel(config.CANAL_FICHAJES_ID)
-                if canal_noticias:
-                    embed_canal = discord.Embed(
-                        title="📋 OFERTA DE FICHAJE",
-                        description=(
-                            f"El **{equipo_dt}** ha presentado una oferta formal por **{jugador.mention}**\n\n"
-                            f"👤 **Agente Libre**\n"
-                            f"⏱️ **Tiempo límite:** 10 minutos\n"
-                            f"💬 **Estado:** Esperando respuesta del jugador"
-                        ),
-                        color=color_equipo,
-                        timestamp=datetime.now()
-                    )
-                    embed_canal.set_author(
-                        name=f"Oficial {equipo_dt}",
-                        icon_url=escudo_url if escudo_url else ctx.author.display_avatar.url
-                    )
-                    embed_canal.set_thumbnail(url=jugador.display_avatar.url)
-                    embed_canal.set_footer(
-                        text=f"DT: {ctx.author.display_name}",
-                        icon_url=ctx.author.display_avatar.url
-                    )
-                    await canal_noticias.send(embed=embed_canal)
-
-                await ctx.followup.send(
-                    f"✅ Oferta enviada a **{jugador.display_name}** por DM. "
-                    f"Tiene 10 minutos para responder."
-                )
-                logger.info(f"📩 Oferta: {equipo_dt} → {jugador.name} (Agente Libre)")
-
-            except discord.Forbidden:
-                await eliminar_oferta_pendiente(str(ctx.author.id), str(jugador.id))
-                await ctx.followup.send(
-                    f"❌ No se pudo enviar DM a **{jugador.display_name}**. "
-                    f"Debe tener los DMs abiertos."
-                )
-
-            return
-
-        # ===== CASO B y C: JUGADOR EN OTRO EQUIPO (requiere monto) =====
-        if not monto:
-            await ctx.followup.send(
-                "❌ Debes especificar un monto para fichar a un jugador de otro equipo.\n"
-                "Uso: `/fichar @Jugador 5000000`"
-            )
+    # ============================================
+    # COMANDO: /fichar
+    # ============================================
+    @commands.hybrid_command(name="fichar", description="Fichar a un Agente Libre")
+    @app_commands.describe(jugador="El Agente Libre que quieres fichar a tu club", monto="Monto del contrato")
+    async def fichar(self, ctx, jugador: discord.Member, monto: int):
+        """Envía una oferta de fichaje con bono de contrato a un jugador Agente Libre."""
+        await ctx.defer()
+        
+        valido, equipo_dt, _, es_agente_libre = await self._validar_condiciones_fichaje(ctx, jugador)
+        if not valido: return
+            
+        if not es_agente_libre:
+            await ctx.send("❌ Este jugador pertenece a un equipo. Usa `/negociar` o `/clausular`.")
             return
 
         if monto <= 0:
-            await ctx.followup.send("❌ El monto debe ser un número positivo.")
+            await ctx.send("❌ El monto debe ser un número positivo.")
             return
 
-        # Validar rango de oferta (75%-200% del valor de mercado)
+        from database import validateOffer
         validacion = await validateOffer(str(jugador.id), monto)
-        if not validacion['valid']:
-            await ctx.followup.send(validacion['message'])
+        market_value = validacion['market_value']
+        
+        if monto != market_value:
+            await ctx.send(f"❌ Como Agente Libre, el equipo debe pagar el precio exacto establecido: **${market_value:,}**.")
             return
 
-        # Verificar presupuesto del comprador
+        from database import get_collection
         equipos_col = get_collection('equipos')
         equipo_comprador_doc = await equipos_col.find_one({'nombre': equipo_dt})
         presupuesto = equipo_comprador_doc.get('presupuesto', 0) if equipo_comprador_doc else 0
 
         if monto > presupuesto:
-            await ctx.followup.send(
-                f"❌ **Fondos insuficientes.** Tu presupuesto es `${presupuesto:,}` "
-                f"y la oferta es `${monto:,}`."
-            )
+            await ctx.send(f"❌ **Fondos insuficientes.** Tu presupuesto es `${presupuesto:,}`.")
+            return
+            
+        from database import crear_oferta_pendiente, get_collection, eliminar_oferta_pendiente
+        await crear_oferta_pendiente(str(ctx.author.id), str(jugador.id), equipo_dt, expira_minutos=10)
+
+        market_value = validacion['market_value']
+        view = OfertaFichajeView(self.bot, ctx, jugador, equipo_dt, monto)
+        embed_dm = discord.Embed(
+            title="📄 OFERTA DE FICHAJE",
+            description=(f"¡El **{equipo_dt}** quiere ficharte!\n\n💰 **Contrato Ofrecido:** `${monto:,}`\n📊 **Valor de Mercado:** `${market_value:,}`\n👤 **DT:** {ctx.author.display_name}\n🛡️ **Equipo:** {equipo_dt}\n\nTienes **10 minutos** para responder."),
+            color=discord.Color.blue()
+        )
+        embed_dm.set_thumbnail(url=ctx.author.display_avatar.url)
+        embed_dm.set_footer(text="Usa los botones para responder")
+
+        try:
+            await jugador.send(embed=embed_dm, view=view)
+
+            equipos_col = get_collection('equipos')
+            equipo_db = await equipos_col.find_one({'nombre': equipo_dt})
+            color_equipo = discord.Color.blue()
+            escudo_url = None
+            if equipo_db:
+                try: color_equipo = int(equipo_db.get('color', '#3498db').lstrip('#'), 16)
+                except: pass
+                escudo_url = equipo_db.get('escudo_url')
+
+            import config
+            from datetime import datetime
+            canal_noticias = self.bot.get_channel(config.CANAL_FICHAJES_ID)
+            if canal_noticias:
+                embed_canal = discord.Embed(title="📋 OFERTA DE FICHAJE", description=(f"El **{equipo_dt}** ha presentado una oferta formal por **{jugador.mention}**\n\n👤 **Agente Libre**\n💰 **Contrato Ofertado:** `${monto:,}`\n⏱️ **Tiempo límite:** 10 minutos\n💬 **Estado:** Esperando respuesta del jugador"), color=color_equipo, timestamp=datetime.now())
+                embed_canal.set_author(name=f"Oficial {equipo_dt}", icon_url=escudo_url if escudo_url else ctx.author.display_avatar.url)
+                embed_canal.set_thumbnail(url=jugador.display_avatar.url)
+                embed_canal.set_footer(text=f"DT: {ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
+                await canal_noticias.send(embed=embed_canal)
+
+            await ctx.send(f"✅ Oferta enviada a **{jugador.display_name}** por DM. Tiene 10 minutos para responder.")
+            import logging
+            logging.getLogger("fichajes").info(f"📩 Oferta Libre: {equipo_dt} → {jugador.name}")
+
+        except discord.Forbidden:
+            from database import eliminar_oferta_pendiente
+            await eliminar_oferta_pendiente(str(ctx.author.id), str(jugador.id))
+            await ctx.send(f"❌ No se pudo enviar DM a **{jugador.display_name}**.")
+
+    # ============================================
+    # COMANDO: /negociar
+    # ============================================
+    @commands.hybrid_command(name="negociar", description="Negociar traspaso de un jugador bajo contrato")
+    @app_commands.describe(jugador="Jugador que quieres comprar", monto="Monto a ofertar al equipo vendedor")
+    async def negociar(self, ctx, jugador: discord.Member, monto: int):
+        """Negociar traspaso regular con el DT dueño del pase."""
+        await ctx.defer()
+        
+        valido, equipo_dt, equipo_jugador, es_agente_libre = await self._validar_condiciones_fichaje(ctx, jugador)
+        if not valido: return
+            
+        if es_agente_libre:
+            await ctx.send("❌ Este jugador es Agente Libre. Usa el comando `/fichar`.")
             return
 
-        eq_comprador = equipo_dt
-        eq_vendedor = equipo_jugador
-        market_value = validacion['market_value']
+        if monto <= 0:
+            await ctx.send("❌ El monto debe ser un número positivo.")
+            return
 
-        # Registrar oferta pendiente (24h para club-a-club)
+        from database import get_collection, crear_oferta_pendiente, eliminar_oferta_pendiente
+        jugadores_col = get_collection('jugadores')
+        jugador_db = await jugadores_col.find_one({'discord_id': str(jugador.id)})
+        clausula = jugador_db.get('clausula', 0) if jugador_db else 0
+        
+        if clausula > 0 and monto >= clausula:
+            await ctx.send(f"❌ Estás ofertando su cláusula (${clausula:,}) o más. Usa el comando `/clausular` para pagar e ignorar al DT vendedor.")
+            return
+
+        validacion = await validateOffer(str(jugador.id), monto)
+        if not validacion['valid']:
+            await ctx.send(validacion['message'])
+            return
+
+        equipos_col = get_collection('equipos')
+        equipo_comprador_doc = await equipos_col.find_one({'nombre': equipo_dt})
+        presupuesto = equipo_comprador_doc.get('presupuesto', 0) if equipo_comprador_doc else 0
+
+        if monto > presupuesto:
+            await ctx.send(f"❌ **Fondos insuficientes.** Tu presupuesto es `${presupuesto:,}`.")
+            return
+
+        import config
+        dt_vendedor_member = None
+        rol_equipo_vendedor = discord.utils.get(ctx.guild.roles, name=equipo_jugador)
+        if rol_equipo_vendedor:
+            for miembro in rol_equipo_vendedor.members:
+                if any(r.name == config.ROL_DE_DT for r in miembro.roles):
+                    dt_vendedor_member = miembro
+                    break
+
+        if not dt_vendedor_member:
+            await ctx.send(f"❌ No se encontró al DT del **{equipo_jugador}** en el servidor.")
+            return
+
         await crear_oferta_pendiente(str(ctx.author.id), str(jugador.id), equipo_dt, expira_minutos=1440)
 
-        # Verificar cláusula para determinar si es clausulazo
+        market_value = validacion['market_value']
+        view = ConfirmacionTraspasoView(self.bot, str(ctx.author.id), str(dt_vendedor_member.id), jugador, equipo_dt, equipo_jugador, monto)
+
+        embed_dm = discord.Embed(
+            title="💼 OFERTA DE TRASPASO",
+            description=(f"El **{equipo_dt}** quiere comprar a **{jugador.name}**.\n\n💰 **Ofrecido:** `${monto:,}`\n📊 **Mercado:** `${market_value:,}`\n👤 **Jugador:** {jugador.mention}\n\n¿Vendes al jugador?"),
+            color=discord.Color.blue()
+        )
+        embed_dm.set_thumbnail(url=jugador.display_avatar.url)
+        embed_dm.set_footer(text="Tienes 24 horas para decidir")
+
+        try:
+            await dt_vendedor_member.send(embed=embed_dm, view=view)
+
+            from datetime import datetime
+            canal_noticias = self.bot.get_channel(config.CANAL_FICHAJES_ID)
+            if canal_noticias:
+                color_traspaso = discord.Color.blue()
+                escudo_comprador = equipo_comprador_doc.get('escudo_url') if equipo_comprador_doc else None
+                if equipo_comprador_doc:
+                    try: color_traspaso = int(equipo_comprador_doc.get('color', '#3498db').lstrip('#'), 16)
+                    except: pass
+                embed_canal = discord.Embed(title="💼 OFERTA DE TRASPASO", description=f"Negociaciones en curso: El **{equipo_dt}** ha ofertado por **{jugador.mention}**", color=color_traspaso, timestamp=datetime.now())
+                embed_canal.set_author(name=f"Oficial {equipo_dt}", icon_url=escudo_comprador if escudo_comprador else ctx.author.display_avatar.url)
+                embed_canal.set_thumbnail(url=jugador.display_avatar.url)
+                embed_canal.add_field(name="💰 Oferta", value=f"**${monto:,}**\nValor de mercado: ${market_value:,}", inline=True)
+                embed_canal.add_field(name="🛡️ Equipos", value=f"**De:** {equipo_jugador}\n**Para:** {equipo_dt}", inline=True)
+                embed_canal.add_field(name="⏱️ Estado", value=f"Esperando respuesta del DT de {equipo_jugador} (24h)", inline=False)
+                await canal_noticias.send(embed=embed_canal)
+
+            await ctx.send(f"✅ ¡Oferta de `${monto:,}` enviada al DT del **{equipo_jugador}**!")
+            import logging
+            logging.getLogger("fichajes").info(f"💼 Oferta: {equipo_dt} ofrece ${monto} a {equipo_jugador} por {jugador.name}")
+
+        except discord.Forbidden:
+            from database import eliminar_oferta_pendiente
+            await eliminar_oferta_pendiente(str(ctx.author.id), str(jugador.id))
+            await ctx.send(f"❌ No se pudo enviar DM al DT del {equipo_jugador}.")
+
+    # ============================================
+    # COMANDO: /clausular
+    # ============================================
+    @commands.hybrid_command(name="clausular", description="Pagar cláusula de rescisión directo al jugador")
+    @app_commands.describe(jugador="El jugador que deseas robar de otro club", monto="Monto a pagar por la cláusula")
+    async def clausular(self, ctx, jugador: discord.Member, monto: int):
+        """Paga directamente la cláusula ignorando al DT."""
+        await ctx.defer()
+        
+        valido, equipo_dt, equipo_jugador, es_agente_libre = await self._validar_condiciones_fichaje(ctx, jugador)
+        if not valido: return
+            
+        if es_agente_libre:
+            await ctx.send("❌ Este jugador es Agente Libre. Usa el comando `/fichar`.")
+            return
+
+        if monto <= 0:
+            await ctx.send("❌ El monto debe ser un número positivo.")
+            return
+
+        from database import get_collection, crear_oferta_pendiente, eliminar_oferta_pendiente
+        import config
+        from datetime import datetime
+        
         jugadores_col = get_collection('jugadores')
         jugador_db = await jugadores_col.find_one({'discord_id': str(jugador.id)})
         clausula = jugador_db.get('clausula', 0) if jugador_db else 0
 
-        if clausula > 0 and monto >= clausula:
-            # ===== CASO C: CLAUSULAZO =====
-            view = ConfirmacionClausulazoView(
-                self.bot, str(ctx.author.id), jugador, eq_comprador, eq_vendedor, monto
-            )
+        if clausula <= 0:
+            await ctx.send(f"❌ **El jugador {jugador.display_name} no tiene una cláusula activa.** Contacta a la liga.")
+            return
 
-            embed_dm = discord.Embed(
-                title="💣 CLAUSULAZO ACTIVADO",
-                description=(
-                    f"El **{eq_comprador}** ha pagado tu cláusula de rescisión.\n\n"
-                    f"💰 **Monto:** `${monto:,}`\n"
-                    f"📊 **Tu cláusula:** `${clausula:,}`\n"
-                    f"🛡️ **Tu equipo actual:** {eq_vendedor}\n\n"
-                    f"**¿Quieres abandonar tu club y fichar por el {eq_comprador}?**\n"
-                    f"Esta decisión es tuya. Tu DT no puede impedirlo."
-                ),
-                color=discord.Color.from_rgb(255, 69, 0)
-            )
-            embed_dm.set_footer(text="Tienes 24 horas para decidir")
+        if monto < clausula:
+            await ctx.send(f"❌ **Monto insuficiente**. La cláusula es de `${clausula:,}`. Para ofertar menos, usa `/negociar`.")
+            return
 
-            try:
-                await jugador.send(embed=embed_dm, view=view)
+        equipos_col = get_collection('equipos')
+        equipo_comprador_doc = await equipos_col.find_one({'nombre': equipo_dt})
+        presupuesto = equipo_comprador_doc.get('presupuesto', 0) if equipo_comprador_doc else 0
 
-                # Embed profesional en canal de fichajes - CLAUSULAZO
-                canal_noticias = self.bot.get_channel(config.CANAL_FICHAJES_ID)
-                if canal_noticias:
-                    equipo_comprador_db = await equipos_col.find_one({'nombre': eq_comprador})
-                    
-                    color_clausula = discord.Color.from_rgb(255, 69, 0)
-                    escudo_comprador = None
-                    if equipo_comprador_db:
-                        color_hex = equipo_comprador_db.get('color', '#FF4500')
-                        try:
-                            color_clausula = int(color_hex.lstrip('#'), 16)
-                        except ValueError:
-                            color_clausula = discord.Color.from_rgb(255, 69, 0)
-                        escudo_comprador = equipo_comprador_db.get('escudo_url')
+        if monto > presupuesto:
+            await ctx.send(f"❌ **Fondos insuficientes**. Tu presupuesto es `${presupuesto:,}`.")
+            return
 
-                    embed_canal = discord.Embed(
-                        title="💣 CLAUSULAZO ACTIVADO",
-                        description=(
-                            f"¡Bomba en el mercado! El **{eq_comprador}** ha ejecutado la cláusula de rescisión\n"
-                            f"de **{jugador.mention}** por **${monto:,}**"
-                        ),
-                        color=color_clausula,
-                        timestamp=datetime.now()
-                    )
-                    embed_canal.set_author(
-                        name=f"Oficial {eq_comprador}",
-                        icon_url=escudo_comprador if escudo_comprador else ctx.author.display_avatar.url
-                    )
-                    embed_canal.set_thumbnail(url=jugador.display_avatar.url)
-                    embed_canal.add_field(
-                        name="📊 Detalles",
-                        value=(
-                            f"**Jugador:** {jugador.display_name}\n"
-                            f"**Equipo origen:** {eq_vendedor}\n"
-                            f"**Cláusula:** ${clausula:,}\n"
-                            f"**Decisión:** En manos del jugador (24h)"
-                        ),
-                        inline=False
-                    )
-                    embed_canal.set_footer(
-                        text=f"DT: {ctx.author.display_name} • Oferta irrevocable",
-                        icon_url=ctx.author.display_avatar.url
-                    )
-                    await canal_noticias.send(embed=embed_canal)
+        await crear_oferta_pendiente(str(ctx.author.id), str(jugador.id), equipo_dt, expira_minutos=1440)
 
-                await ctx.followup.send(f"✅ ¡Cláusula pagada! Esperando la decisión de {jugador.mention}.")
-                logger.info(f"💣 Clausulazo: {eq_comprador} paga ${monto} por {jugador.name} ({eq_vendedor})")
+        view = ConfirmacionClausulazoView(self.bot, str(ctx.author.id), jugador, equipo_dt, equipo_jugador, monto)
 
-            except discord.Forbidden:
-                await eliminar_oferta_pendiente(str(ctx.author.id), str(jugador.id))
-                await ctx.followup.send(
-                    f"❌ ¡Operación fallida! **{jugador.mention}** tiene sus Mensajes Directos cerrados "
-                    f"de Servidor. Tiene que habilitarlos para poder enviarle el maletín millonario."
-                )
-        else:
-            # ===== CASO B: TRASPASO CLUB A CLUB =====
-            # Buscar DT del equipo vendedor
-            dt_vendedor_member = None
-            rol_equipo_vendedor = discord.utils.get(ctx.guild.roles, name=eq_vendedor)
-            if rol_equipo_vendedor:
-                for miembro in rol_equipo_vendedor.members:
-                    if any(r.name == config.ROL_DE_DT for r in miembro.roles):
-                        dt_vendedor_member = miembro
-                        break
+        embed_dm = discord.Embed(
+            title="💣 CLAUSULAZO ACTIVADO",
+            description=(f"El **{equipo_dt}** pagó tu cláusula de rescisión.\n\n💰 **Monto ofertado:** `${monto:,}`\n📊 **Tu cláusula:** `${clausula:,}`\n🛡️ **Tu equipo actual:** {equipo_jugador}\n\n**¿Quieres abandonar tu club y fichar por el {equipo_dt}?**\nLa decisión es tuya. Tu DT no puede impedirlo."),
+            color=discord.Color.from_rgb(255, 69, 0)
+        )
+        embed_dm.set_footer(text="Tienes 24 horas para decidir")
 
-            if not dt_vendedor_member:
-                await eliminar_oferta_pendiente(str(ctx.author.id), str(jugador.id))
-                await ctx.followup.send(f"❌ No se encontró al DT del **{eq_vendedor}** en el servidor.")
-                return
+        try:
+            await jugador.send(embed=embed_dm, view=view)
 
-            view = ConfirmacionTraspasoView(
-                self.bot, str(ctx.author.id), str(dt_vendedor_member.id),
-                jugador, eq_comprador, eq_vendedor, monto
-            )
+            canal_noticias = self.bot.get_channel(config.CANAL_FICHAJES_ID)
+            if canal_noticias:
+                color_clausula = discord.Color.from_rgb(255, 69, 0)
+                escudo_comprador = equipo_comprador_doc.get('escudo_url') if equipo_comprador_doc else None
+                if equipo_comprador_doc:
+                    try: color_clausula = int(equipo_comprador_doc.get('color', '#FF4500').lstrip('#'), 16)
+                    except: pass
+                embed_canal = discord.Embed(title="💣 CLAUSULAZO ACTIVADO", description=f"¡Bomba! El **{equipo_dt}** ejecutó la cláusula de rescisión\nde **{jugador.mention}** por **${monto:,}**", color=color_clausula, timestamp=datetime.now())
+                embed_canal.set_author(name=f"Oficial {equipo_dt}", icon_url=escudo_comprador if escudo_comprador else ctx.author.display_avatar.url)
+                embed_canal.set_thumbnail(url=jugador.display_avatar.url)
+                embed_canal.add_field(name="📊 Detalles", value=f"**Jugador:** {jugador.display_name}\n**Origen:** {equipo_jugador}\n**Cláusula pactada:** ${clausula:,}\n**Decisión:** En manos del jugador (24h)", inline=False)
+                await canal_noticias.send(embed=embed_canal)
 
-            embed_dm = discord.Embed(
-                title="💼 OFERTA DE TRASPASO",
-                description=(
-                    f"El **{eq_comprador}** quiere comprar a **{jugador.name}** de tu equipo.\n\n"
-                    f"💰 **Monto ofrecido:** `${monto:,}`\n"
-                    f"📊 **Valor de mercado:** `${market_value:,}`\n"
-                    f"👤 **Jugador:** {jugador.mention}\n\n"
-                    f"¿Aceptas vender a tu jugador?"
-                ),
-                color=discord.Color.blue()
-            )
-            embed_dm.set_thumbnail(url=jugador.display_avatar.url)
-            embed_dm.set_footer(text="Tienes 24 horas para decidir")
+            await ctx.send(f"✅ ¡Cláusula pagada de `${monto:,}`! Todo queda en manos de {jugador.mention}.")
+            import logging
+            logging.getLogger("fichajes").info(f"💣 Clausulazo: {equipo_dt} paga ${monto} por {jugador.name} (ex {equipo_jugador})")
 
-            try:
-                await dt_vendedor_member.send(embed=embed_dm, view=view)
-
-                # Embed profesional en canal de fichajes - TRASPASO
-                canal_noticias = self.bot.get_channel(config.CANAL_FICHAJES_ID)
-                if canal_noticias:
-                    equipo_comprador_db = await equipos_col.find_one({'nombre': eq_comprador})
-                    
-                    color_traspaso = discord.Color.blue()
-                    escudo_comprador = None
-                    if equipo_comprador_db:
-                        color_hex = equipo_comprador_db.get('color', '#3498db')
-                        try:
-                            color_traspaso = int(color_hex.lstrip('#'), 16)
-                        except ValueError:
-                            color_traspaso = discord.Color.blue()
-                        escudo_comprador = equipo_comprador_db.get('escudo_url')
-
-                    embed_canal = discord.Embed(
-                        title="💼 OFERTA DE TRASPASO",
-                        description=(
-                            f"Negociaciones en curso: El **{eq_comprador}** ha presentado\n"
-                            f"una oferta formal por **{jugador.mention}**"
-                        ),
-                        color=color_traspaso,
-                        timestamp=datetime.now()
-                    )
-                    embed_canal.set_author(
-                        name=f"Oficial {eq_comprador}",
-                        icon_url=escudo_comprador if escudo_comprador else ctx.author.display_avatar.url
-                    )
-                    embed_canal.set_thumbnail(url=jugador.display_avatar.url)
-                    embed_canal.add_field(
-                        name="💰 Oferta",
-                        value=f"**${monto:,}**\nValor de mercado: ${market_value:,}",
-                        inline=True
-                    )
-                    embed_canal.add_field(
-                        name="🛡️ Equipos",
-                        value=f"**Origen:** {eq_vendedor}\n**Destino:** {eq_comprador}",
-                        inline=True
-                    )
-                    embed_canal.add_field(
-                        name="⏱️ Estado",
-                        value=f"Esperando respuesta del DT de **{eq_vendedor}** (24h)",
-                        inline=False
-                    )
-                    embed_canal.set_footer(
-                        text=f"DT Ofertante: {ctx.author.display_name}",
-                        icon_url=ctx.author.display_avatar.url
-                    )
-                    await canal_noticias.send(embed=embed_canal)
-
-                await ctx.followup.send(f"✅ ¡Oferta de `${monto:,}` enviada exitosamente por DM al DT del **{eq_vendedor}**!")
-                logger.info(f"💼 Oferta Club a Club: {eq_comprador} ofrece ${monto} a {eq_vendedor} por {jugador.name}")
-
-            except discord.Forbidden:
-                await eliminar_oferta_pendiente(str(ctx.author.id), str(jugador.id))
-                await ctx.followup.send(f"❌ No se pudo enviar DM al DT del {eq_vendedor}.")
+        except discord.Forbidden:
+            from database import eliminar_oferta_pendiente
+            await eliminar_oferta_pendiente(str(ctx.author.id), str(jugador.id))
+            await ctx.send(f"❌ ¡Operación fallida! **{jugador.mention}** tiene sus Mensajes Directos cerrados.")
 
     # ============================================
     # COMANDO: /despedir
@@ -1075,7 +1035,7 @@ class FichajesCog(commands.Cog):
         # 1. Verificar que sea DT
         es_dt = any(rol.name == config.ROL_DE_DT for rol in ctx.author.roles)
         if not es_dt:
-            await ctx.followup.send("❌ Solo los **Directores Técnicos** pueden despedir jugadores.")
+            await ctx.send("❌ Solo los **Directores Técnicos** pueden despedir jugadores.")
             return
 
         # 2. Encontrar equipo del DT
@@ -1086,7 +1046,7 @@ class FichajesCog(commands.Cog):
                 break
 
         if not equipo_dt:
-            await ctx.followup.send("❌ No se encontró tu equipo.")
+            await ctx.send("❌ No se encontró tu equipo.")
             return
 
         # 3. Verificar que el jugador sea de su equipo
@@ -1097,18 +1057,18 @@ class FichajesCog(commands.Cog):
         })
 
         if not jugador_db:
-            await ctx.followup.send(f"❌ **{jugador.display_name}** no es jugador de tu equipo.")
+            await ctx.send(f"❌ **{jugador.display_name}** no es jugador de tu equipo.")
             return
 
         # 4. No puede despedirse a sí mismo
         if jugador.id == ctx.author.id:
-            await ctx.followup.send("❌ No puedes despedirte a ti mismo. Usa `/renunciar`.")
+            await ctx.send("❌ No puedes despedirte a ti mismo. Usa `/renunciar`.")
             return
 
         # 5. No puede despedir a otro DT
         es_dt_jugador = any(rol.name == config.ROL_DE_DT for rol in jugador.roles)
         if es_dt_jugador:
-            await ctx.followup.send("❌ No puedes despedir a otro Director Técnico. Debe usar `/renunciar`.")
+            await ctx.send("❌ No puedes despedir a otro Director Técnico. Debe usar `/renunciar`.")
             return
 
         # 6. Ejecutar despido
@@ -1145,7 +1105,7 @@ class FichajesCog(commands.Cog):
                 color=discord.Color.red()
             )
             embed.set_author(name="🚪 JUGADOR DESPEDIDO", icon_url=jugador.display_avatar.url)
-            await ctx.followup.send(embed=embed)
+            await ctx.send(embed=embed)
 
             # Notificar al jugador por DM
             try:
@@ -1190,9 +1150,9 @@ class FichajesCog(commands.Cog):
             logger.info(f"🚪 Despido: {jugador.name} de {equipo_dt} (por {ctx.author.name})")
 
         except discord.Forbidden:
-            await ctx.followup.send("❌ No tengo permisos para modificar roles.")
+            await ctx.send("❌ No tengo permisos para modificar roles.")
         except Exception as e:
-            await ctx.followup.send(f"❌ Error al despedir: {e}")
+            await ctx.send(f"❌ Error al despedir: {e}")
             logger.error(f"Error en despedir: {e}", exc_info=True)
 
 

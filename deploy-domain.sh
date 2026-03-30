@@ -94,6 +94,12 @@ sudo nginx -t && echo "   ✅ Configuración Nginx válida"
 echo ""
 echo "[5/7] Configurando SSL con Certbot..."
 
+# Instalar Certbot si no está instalado
+if ! command -v certbot &> /dev/null; then
+    echo "   📦 Instalando Certbot..."
+    sudo apt install -y certbot python3-certbot-nginx
+fi
+
 # Verificar si ya existe certificado
 if [ -d "/etc/letsencrypt/live/$DOMINIO" ]; then
     echo "   ✅ Certificado ya existe para $DOMINIO"

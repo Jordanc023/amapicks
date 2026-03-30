@@ -73,7 +73,7 @@ class MercadoCog(commands.Cog):
         embed.set_footer(text=f"Autorizado por {ctx.author.display_name}")
         embed.timestamp = datetime.now()
 
-        await ctx.followup.send(content=mencion, embed=embed)
+        await ctx.send(content=mencion, embed=embed)
         logger.info(f"🟢 Mercado abierto (global) por {ctx.author.name}")
 
     @commands.hybrid_command(name="cerrar_mercado", description="Cerrar el mercado de fichajes (Admin)")
@@ -108,7 +108,7 @@ class MercadoCog(commands.Cog):
         embed.set_footer(text=f"Cerrado por {ctx.author.display_name}")
         embed.timestamp = datetime.now()
 
-        await ctx.followup.send(content=mencion, embed=embed)
+        await ctx.send(content=mencion, embed=embed)
         logger.info(f"🔴 Mercado cerrado por {ctx.author.name}")
 
 

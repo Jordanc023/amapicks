@@ -167,31 +167,33 @@ class JugadoresCog(commands.Cog):
             rol_dt = discord.utils.get(ctx.guild.roles, name=config.ROL_DE_DT)
 
             if canal_agentes:
-                pos_colores = {
-                    'GK': discord.Color.from_rgb(234, 179, 8),  # Amarillo
-                    'DEF': discord.Color.from_rgb(59, 130, 246), # Azul
-                    'MC': discord.Color.from_rgb(34, 197, 94),   # Verde
-                    'DC': discord.Color.from_rgb(239, 68, 68)    # Rojo
-                }
-                color_embed = pos_colores.get(pos, discord.Color.light_grey())
-                
-                # Fetch DB para ver si tiene ex_equipo
-                agentes_col = get_collection('agentes_libres')
-                agente_previo = await agentes_col.find_one({'discord_id': str(ctx.author.id)})
-                ex_equipo = agente_previo.get('ex_equipo') if agente_previo else None
+                pos_emojis = {'GK': '🧤', 'DEF': '🛡️', 'MC': '🎯', 'DC': '⚽'}
+                emoji_pos = pos_emojis.get(pos, '⚽')
 
+                desc = f"""
+╔════════════════════════════╗
+      📄 CV DEPORTIVO
+╚════════════════════════════╝
+
+👤 **JUGADOR:**
+╰─ {ctx.author.mention}
+
+📢 **ESTADO:**
+╰─ En agencia libre. Escuchando ofertas de clubes.
+
+⚽ **POSICIÓN:**
+┏━━━━━━━━━━━━━┓
+┃      {emoji_pos} [ {pos} ]      ┃
+┗━━━━━━━━━━━━━┛
+
+---
+*Haz clic en el botón inferior para iniciar negociaciones*
+"""
                 agente_embed = discord.Embed(
-                    title="📋 CV Deportivo",
-                    description=f"**{ctx.author.mention}** se ha declarado en estado de agencia libre y está escuchando ofertas de clubes.",
-                    color=color_embed
+                    description=desc.strip(),
+                    color=discord.Color.green()
                 )
-                agente_embed.set_author(name="🆕 NUEVO AGENTE LIBRE", icon_url=ctx.author.display_avatar.url)
-                agente_embed.add_field(name="📍 Posición", value=f"**{pos}**", inline=True)
-                if ex_equipo:
-                    agente_embed.add_field(name="🔙 Último Club", value=f"*{ex_equipo}*", inline=True)
-                    
                 agente_embed.set_thumbnail(url=ctx.author.display_avatar.url)
-                agente_embed.set_footer(text="Haz clic en el botón inferior para iniciar negociaciones")
 
                 content = rol_dt.mention if rol_dt else ""
                 view_fichar = BotonFicharAgenteView(ctx.author.id)
@@ -269,7 +271,7 @@ class JugadoresCog(commands.Cog):
             eq_hist = evento.get('details', {}).get('equipo', '?')
             historial_list.append((fecha_str, tipo, eq_hist))
 
-        await ctx.followup.send("🎨 `Forjando Player Card en alta definición...`", delete_after=3)
+        await ctx.send("🎨 `Forjando Player Card en alta definición...`", delete_after=3)
 
         try:
             import utils_imagen
@@ -296,7 +298,7 @@ class JugadoresCog(commands.Cog):
             fecha_actual = datetime.now().strftime('%d/%m/%Y %H:%M')
             embed.set_footer(text=f"Amapicks • {fecha_actual} • Solicitado por {ctx.author.display_name}")
             
-            await ctx.followup.send(file=file, embed=embed)
+            await ctx.send(file=file, embed=embed)
         except ImportError:
             await ctx.send("❌ El motor gráfico Pillow no está instalado en el servidor.")
         except Exception as e:
@@ -307,6 +309,8 @@ class JugadoresCog(commands.Cog):
     @app_commands.autocomplete(nombre_equipo=autocomplete_equipos)
     async def plantilla(self, ctx, *, nombre_equipo: str = None):
         """Muestra la plantilla de jugadores de un equipo."""
+        await ctx.defer()
+        
         # Recarga de emergencia
         if not self.bot.roles_equipos:
             logger.warning("⚠️ Lista de equipos vacía. Recargando...")
@@ -374,8 +378,18 @@ class JugadoresCog(commands.Cog):
         # Identificar al DT
         dt_encontrado = None
         if rol_equipo:
+            # Forzar actualización de cache si es posible (los intents listan a los conectados y los de base de datos)
             for miembro in rol_equipo.members:
-                if any(r.name == config.ROL_DE_DT for r in miembro.roles):
+                es_dt = False
+                for r in miembro.roles:
+                    if hasattr(config, 'ROL_DT_OFICIAL_ID') and r.id == config.ROL_DT_OFICIAL_ID:
+                        es_dt = True
+                        break
+                    # Fallback por nombre por si el ID falla
+                    if r.name.strip() == config.ROL_DE_DT.strip():
+                        es_dt = True
+                        break
+                if es_dt:
                     dt_encontrado = miembro
                     break
         
@@ -395,7 +409,7 @@ class JugadoresCog(commands.Cog):
         else:
             lista_jugadores = []
 
-        await ctx.followup.send("🎨 `Dibujando la tarjeta del equipo en alta resolución...`", delete_after=3)
+        await ctx.send("🎨 `Dibujando la tarjeta del equipo en alta resolución...`", delete_after=3)
         
         try:
             import utils_imagen
@@ -417,7 +431,7 @@ class JugadoresCog(commands.Cog):
             embed.set_image(url="attachment://plantilla.png")
             embed.set_footer(text=f"Amapicks • {estado} • Solicitado por {ctx.author.display_name}")
             
-            await ctx.followup.send(file=file, embed=embed)
+            await ctx.send(file=file, embed=embed)
         except ImportError:
             await ctx.send("❌ El motor gráfico Pillow no está instalado en el servidor.\n**Admin:** Ejecute `pip install Pillow aiohttp` en la VPS.")
         except Exception as e:

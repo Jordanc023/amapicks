@@ -258,20 +258,62 @@ class AdministracionCog(commands.Cog):
             await ctx.send(f"❌ Error al crear backup: {e}")
             logger.error(f"Error en backup_manual: {e}", exc_info=True)
 
+    @commands.hybrid_command(name="limpiar_comandos", description="Limpiar comandos slash globales duplicados (solo admin)")
+    @check_es_admin()
+    async def limpiar_comandos(self, ctx):
+        """Limpia comandos slash globales y resincroniza solo en este servidor."""
+        await ctx.send("🧹 Limpiando comandos slash...")
+        try:
+            # 1. Obtener comandos globales actuales
+            global_commands = await self.bot.tree.fetch_commands()
+            
+            # 2. Limpiar comandos del guild actual y resincronizar
+            self.bot.tree.clear_commands(guild=ctx.guild)
+            synced = await self.bot.tree.sync(guild=ctx.guild)
+            
+            msg = f"✅ Comandos sincronizados en este servidor: {len(synced)}\n"
+            if global_commands:
+                msg += f"⚠️ Se detectaron {len(global_commands)} comandos globales. Discord los limpiará automáticamente en ~1 hora.\n"
+                msg += "💡 Si los duplicados persisten, reinicia el bot después de 1 hora."
+            
+            await ctx.send(msg)
+            logger.info(f"🧹 Limpieza de comandos en {ctx.guild.name}: {len(synced)} guild, {len(global_commands)} global detectados")
+        except Exception as e:
+            await ctx.send(f"❌ Error: {e}")
+            logger.error(f"Error en limpiar_comandos: {e}", exc_info=True)
+
     @commands.hybrid_command(name="sync_old", description="Sincronizar comandos de barra en el servidor actual (legacy)")
     @check_es_admin()
     async def sync_old(self, ctx):
         """Sincroniza los comandos de barra con el servidor actual."""
         await ctx.send("🔄 Sincronizando comandos de barra...")
         try:
-            # Sincronizar solo al servidor actual para rapidez
-            self.bot.tree.copy_global_to(guild=ctx.guild)
+            # Sincronizar solo al servidor actual para rapidez (sin copy_global_to)
             synced = await self.bot.tree.sync(guild=ctx.guild)
             await ctx.send(f"✅ Se han sincronizado {len(synced)} comandos en este servidor.")
             logger.info(f"✅ Sincronización manual en {ctx.guild.name}: {len(synced)} comandos.")
         except Exception as e:
             await ctx.send(f"❌ Error al sincronizar: {e}")
             logger.error(f"Error en sync: {e}", exc_info=True)
+
+    @commands.hybrid_command(name="donde", description="Diagnóstico: Ver en qué máquina y carpeta corro")
+    async def donde(self, ctx):
+        """Muestra datos del sistema operativo y directorio de ejecución del bot."""
+        import platform
+        import os
+        try:
+            await ctx.send(f"🤖 **Diagnóstico de Instancia Respondiendo:**\n`OS:` {platform.system()} - {platform.release()}\n`Carpeta:` {os.getcwd()}")
+        except Exception as e:
+            logger.error(e)
+            
+    @commands.hybrid_command(name="reiniciar", description="Reiniciar el bot (sólo Admin)")
+    @check_es_admin()
+    async def reiniciar(self, ctx):
+        """Reinicia el proceso del bot de Discord."""
+        await ctx.send("🔄 **Reiniciando sistema...** El bot volverá en unos segundos.")
+        logger.warning(f"🔄 Solicitud de reinicio del proceso emitida por admin: {ctx.author.name}")
+        import sys
+        sys.exit(0)
 
 
 async def setup(bot):

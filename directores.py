@@ -5,13 +5,13 @@ Comandos: /dt, /renunciar, /mi_rol
 import asyncio
 import discord
 from discord import app_commands
-from discord.ui import View, Button, Modal, TextInput
+from discord.ui import View, Button, Modal, TextInput, Select
 from logger import get_module_logger
 import traceback
 
 logger = get_module_logger("directores")
 from discord.ext import commands
-from datetime import datetime
+from datetime import datetime, timezone
 
 import config
 from database import get_collection, log_action
@@ -181,7 +181,7 @@ class FundarEquipoView(View):
                 "color": self.color,
                 "logo_url": self.logo_url,
                 "guild_id": str(interaction.guild_id),
-                "fecha_solicitud": datetime.utcnow()
+                "fecha_solicitud": datetime.now(timezone.utc)
             })
 
             # Deshabilitar todo (ya se hizo arriba pero reforzamos antes de editar)
@@ -348,14 +348,14 @@ class DirectoresCog(commands.Cog):
 
         # 1. Verificar permisos de Admin
         if not es_admin(ctx.author):
-            await ctx.followup.send("❌ Solo los administradores pueden asignar DTs.")
+            await ctx.send("❌ Solo los administradores pueden asignar DTs.")
             return
 
         # 2. Buscar equipo
         nombre_equipo_raw = equipo.strip()
 
         if not nombre_equipo_raw:
-            await ctx.followup.send("⚠️ Debes especificar el nombre del equipo.")
+            await ctx.send("⚠️ Debes especificar el nombre del equipo.")
             return
 
         equipo_encontrado, coincidencias = buscar_equipo(nombre_equipo_raw, self.bot.roles_equipos)
@@ -363,9 +363,9 @@ class DirectoresCog(commands.Cog):
         if not equipo_encontrado:
             if coincidencias:
                 lista = "\n".join([f"• {c}" for c in coincidencias[:5]])
-                await ctx.followup.send(f"⚠️ **{nombre_equipo_raw}** es ambiguo. ¿Te referías a alguno de estos?\n{lista}")
+                await ctx.send(f"⚠️ **{nombre_equipo_raw}** es ambiguo. ¿Te referías a alguno de estos?\n{lista}")
             else:
-                await ctx.followup.send(f"❌ No encontré ningún equipo llamado **{nombre_equipo_raw}**.\nUsa `/plantilla` para ver los equipos disponibles.")
+                await ctx.send(f"❌ No encontré ningún equipo llamado **{nombre_equipo_raw}**.\nUsa `/plantilla` para ver los equipos disponibles.")
             return
 
         # 3. Lógica de inscripción
@@ -374,11 +374,11 @@ class DirectoresCog(commands.Cog):
             rol_dt_obj = discord.utils.get(ctx.guild.roles, name=config.ROL_DE_DT)
 
             if not rol_equipo_obj:
-                await ctx.followup.send(f"❌ Error crítico: El equipo existe en BD pero no encuentro el rol **{equipo_encontrado}** en Discord.")
+                await ctx.send(f"❌ Error crítico: El equipo existe en BD pero no encuentro el rol **{equipo_encontrado}** en Discord.")
                 return
 
             if not rol_dt_obj:
-                await ctx.followup.send(f"❌ Error crítico: No encuentro el rol de DT **{config.ROL_DE_DT}** en Discord.")
+                await ctx.send(f"❌ Error crítico: No encuentro el rol de DT **{config.ROL_DE_DT}** en Discord.")
                 return
 
             # Asignar roles
@@ -419,7 +419,7 @@ class DirectoresCog(commands.Cog):
             else:
                 embed.set_thumbnail(url=usuario.display_avatar.url)
 
-            await ctx.followup.send(embed=embed)
+            await ctx.send(embed=embed)
             logger.info(f"👔 Nuevo DT: {usuario.name} -> {equipo_encontrado} (por {ctx.author.name})")
 
             # Log de auditoría (async)
@@ -434,9 +434,9 @@ class DirectoresCog(commands.Cog):
             )
 
         except discord.Forbidden:
-            await ctx.followup.send("❌ No tengo permisos para asignar roles. Sube mi rol por encima de los equipos y DTs.")
+            await ctx.send("❌ No tengo permisos para asignar roles. Sube mi rol por encima de los equipos y DTs.")
         except Exception as e:
-            await ctx.followup.send(f"❌ Error inesperado: {e}")
+            await ctx.send(f"❌ Error inesperado: {e}")
             logger.error(f"Error en inscribir_dt: {e}", exc_info=True)
 
     @commands.hybrid_command(name="banco", description="Revisar el estado de cuenta y fondos de tu equipo (DT).")
@@ -446,7 +446,7 @@ class DirectoresCog(commands.Cog):
         
         # 1. Validar que sea DT
         if not discord.utils.get(ctx.author.roles, name=config.ROL_DE_DT):
-            await ctx.followup.send("❌ Este comando es exclusivo para **Directores Técnicos**.", ephemeral=True)
+            await ctx.send("❌ Este comando es exclusivo para **Directores Técnicos**.", ephemeral=True)
             return
             
         # 2. Encontrar el rol de su equipo
@@ -457,7 +457,7 @@ class DirectoresCog(commands.Cog):
                 break
                 
         if not equipo_nombre:
-            await ctx.followup.send("⚠️ Eres DT pero no pareces tener el rol de tu equipo asignado.", ephemeral=True)
+            await ctx.send("⚠️ Eres DT pero no pareces tener el rol de tu equipo asignado.", ephemeral=True)
             return
 
         equipos_col = get_collection("equipos")
@@ -466,7 +466,7 @@ class DirectoresCog(commands.Cog):
 
         equipo_doc = await equipos_col.find_one({"nombre": equipo_nombre})
         if not equipo_doc:
-            await ctx.followup.send("⚠️ Error: Tu equipo no está registrado en la base de datos.", ephemeral=True)
+            await ctx.send("⚠️ Error: Tu equipo no está registrado en la base de datos.", ephemeral=True)
             return
 
         # 3. Calcular Métrica 1: Presupuesto Bruto
@@ -527,7 +527,7 @@ class DirectoresCog(commands.Cog):
         embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/2830/2830284.png")
         embed.set_footer(text=f"Consultado por el DT {ctx.author.display_name}", icon_url=ctx.author.display_avatar.url if ctx.author.display_avatar else None)
         
-        await ctx.followup.send(embed=embed, ephemeral=True)
+        await ctx.send(embed=embed, ephemeral=True)
 
     @commands.hybrid_command(name="licencia_dt", description="Otorga licencia de DT a un usuario para fundar un club (Admin)")
     async def licencia_dt(self, ctx, usuario: discord.Member):
@@ -537,12 +537,12 @@ class DirectoresCog(commands.Cog):
         await ctx.defer()
         
         if not es_admin(ctx.author):
-            await ctx.followup.send("❌ Solo los administradores pueden otorgar licencias de DT.")
+            await ctx.send("❌ Solo los administradores pueden otorgar licencias de DT.")
             return
 
         rol_licencia_obj = ctx.guild.get_role(getattr(config, 'ROL_LICENCIA_ID', 1474670232181411994))
         if not rol_licencia_obj:
-            await ctx.followup.send(f"❌ Error: No encuentro el rol de Licencia de Fundador (ID: 1474670232181411994) en el servidor.")
+            await ctx.send(f"❌ Error: No encuentro el rol de Licencia de Fundador (ID: 1474670232181411994) en el servidor.")
             return
 
         try:
@@ -594,13 +594,13 @@ class DirectoresCog(commands.Cog):
             embed.set_footer(text=f"Licencia ID: {str(usuario.id)[:6]}-{datetime.datetime.now().strftime('%M%S')} • Emitida: {fecha}")
             embed.set_thumbnail(url=usuario.display_avatar.url)
             
-            await ctx.followup.send(content=f"{usuario.mention}", embed=embed)
+            await ctx.send(content=f"{usuario.mention}", embed=embed)
             logger.info(f"🎫 Licencia DT otorgada a {usuario.name} por {ctx.author.name}")
 
         except discord.Forbidden:
-            await ctx.followup.send("❌ No tengo permisos suficientes para asignar el rol de DT. (Verifica mis permisos)")
+            await ctx.send("❌ No tengo permisos suficientes para asignar el rol de DT. (Verifica mis permisos)")
         except Exception as e:
-            await ctx.followup.send(f"❌ Error inesperado: {e}")
+            await ctx.send(f"❌ Error inesperado: {e}")
             logger.error(f"Error en licencia_dt: {e}", exc_info=True)
 
     @commands.hybrid_command(name="fundar_equipo", description="Crea tu propio equipo (Requiere Licencia de DT)")
@@ -655,7 +655,7 @@ class DirectoresCog(commands.Cog):
         
         # 1. Validar que quien ejecuta sea DT
         if not discord.utils.get(ctx.author.roles, name=config.ROL_DE_DT):
-            await ctx.followup.send("❌ Solo el **Director Técnico** puede asignar un SubDT.", ephemeral=True)
+            await ctx.send("❌ Solo el **Director Técnico** puede asignar un SubDT.", ephemeral=True)
             return
         
         # 2. Encontrar el equipo del DT
@@ -666,7 +666,7 @@ class DirectoresCog(commands.Cog):
                 break
         
         if not equipo_nombre:
-            await ctx.followup.send("⚠️ No se encontró tu equipo.", ephemeral=True)
+            await ctx.send("⚠️ No se encontró tu equipo.", ephemeral=True)
             return
         
         # 3. Verificar que el usuario sea jugador del mismo equipo
@@ -677,12 +677,12 @@ class DirectoresCog(commands.Cog):
         })
         
         if not jugador_doc:
-            await ctx.followup.send(f"❌ **{usuario.display_name}** no es un jugador de tu equipo.", ephemeral=True)
+            await ctx.send(f"❌ **{usuario.display_name}** no es un jugador de tu equipo.", ephemeral=True)
             return
         
         # 4. Verificar que no sea el DT actual
         if jugador_doc.get('es_dt', False):
-            await ctx.followup.send("❌ No puedes asignar al DT como SubDT.", ephemeral=True)
+            await ctx.send("❌ No puedes asignar al DT como SubDT.", ephemeral=True)
             return
         
         # 5. Asignar rol de SubDT
@@ -711,7 +711,7 @@ class DirectoresCog(commands.Cog):
         embed.add_field(name="Equipo", value=equipo_nombre, inline=True)
         embed.set_footer(text="El SubDT cuenta como parte de la plantilla")
         
-        await ctx.followup.send(embed=embed)
+        await ctx.send(embed=embed)
         logger.info(f"🎖️ Nuevo SubDT: {usuario.name} -> {equipo_nombre}")
     
     @commands.hybrid_command(name="capitan", description="Asigna un Capitán a tu equipo (cuenta en la plantilla).")
@@ -722,7 +722,7 @@ class DirectoresCog(commands.Cog):
         
         # 1. Validar que quien ejecuta sea DT
         if not discord.utils.get(ctx.author.roles, name=config.ROL_DE_DT):
-            await ctx.followup.send("❌ Solo el **Director Técnico** puede asignar un Capitán.", ephemeral=True)
+            await ctx.send("❌ Solo el **Director Técnico** puede asignar un Capitán.", ephemeral=True)
             return
         
         # 2. Encontrar el equipo del DT
@@ -733,7 +733,7 @@ class DirectoresCog(commands.Cog):
                 break
         
         if not equipo_nombre:
-            await ctx.followup.send("⚠️ No se encontró tu equipo.", ephemeral=True)
+            await ctx.send("⚠️ No se encontró tu equipo.", ephemeral=True)
             return
         
         # 3. Verificar que el usuario sea jugador del mismo equipo
@@ -744,12 +744,12 @@ class DirectoresCog(commands.Cog):
         })
         
         if not jugador_doc:
-            await ctx.followup.send(f"❌ **{usuario.display_name}** no es un jugador de tu equipo.", ephemeral=True)
+            await ctx.send(f"❌ **{usuario.display_name}** no es un jugador de tu equipo.", ephemeral=True)
             return
         
         # 4. Verificar que no sea el DT actual
         if jugador_doc.get('es_dt', False):
-            await ctx.followup.send("❌ No puedes asignar al DT como Capitán.", ephemeral=True)
+            await ctx.send("❌ No puedes asignar al DT como Capitán.", ephemeral=True)
             return
         
         # 5. Asignar rol de Capitán
@@ -778,7 +778,7 @@ class DirectoresCog(commands.Cog):
         embed.add_field(name="Equipo", value=equipo_nombre, inline=True)
         embed.set_footer(text="El Capitán cuenta como parte de la plantilla")
         
-        await ctx.followup.send(embed=embed)
+        await ctx.send(embed=embed)
         logger.info(f"⭐ Nuevo Capitán: {usuario.name} -> {equipo_nombre}")
 
 async def setup(bot):

@@ -2,7 +2,7 @@ import discord
 import os
 import sys
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from discord.ext import commands, tasks
 
 # Forzar loop de evento para compatibilidad con discord.py + Python 3.11+
@@ -21,7 +21,8 @@ from config import (
 )
 from database import get_collection, init_db
 from logger import log, get_module_logger
-from utils import es_admin
+from utils import es_admin, get_bot_config
+import config
 
 logger = get_module_logger("main")
 
@@ -54,22 +55,7 @@ class LigaBot(commands.Bot):
             except Exception as e:
                 logger.error(f" Error al cargar extensión {ext}: {e}", exc_info=True)
 
-        # Sincronizar Slash Commands (global y por cada guild)
-        try:
-            # Sincronización global (tarda hasta 1h en propagarse)
-            synced = await self.tree.sync()
-            logger.info(f" Sincronizados {len(synced)} comandos de barra globalmente.")
-            
-            # Sincronización por guild (inmediata)
-            for guild in self.guilds:
-                try:
-                    guild_synced = await self.tree.sync(guild=guild)
-                    logger.info(f" Sincronizados {len(guild_synced)} comandos en '{guild.name}'")
-                except Exception as e_guild:
-                    logger.warning(f" Error sincronizando en {guild.name}: {e_guild}")
-        except Exception as e:
-            logger.error(f" Error al sincronizar árbol de comandos: {e}", exc_info=True)
-
+        # Solo cargamos las extensiones. La sincronización se hará en on_ready cuando bot.guilds esté poblado.
     async def cargar_equipos(self):
         """
         Carga la lista de equipos detectando roles que empiecen con '-'.
@@ -120,7 +106,7 @@ class LigaBot(commands.Bot):
             )
             # Verificar si la interacción ya fue respondida (después de ctx.defer)
             if ctx.interaction and ctx.interaction.response.is_done():
-                await ctx.followup.send(embed=embed, delete_after=15)
+                await ctx.send(embed=embed, delete_after=15)
             else:
                 await ctx.send(embed=embed, delete_after=15)
         except discord.HTTPException:
@@ -139,7 +125,26 @@ class LigaBot(commands.Bot):
         logger.info('🔄 Sincronizando base de datos al iniciar...')
         for guild in self.guilds:
             await self.perform_sync(guild)
-        logger.info('✅ Sincronización inicial completada.')
+        logger.info('✅ Sincronización de BD inicial completada.')
+
+        # Sincronización de Slash Commands (Local por Guild)
+        try:
+            logger.info(" Sincronizando comandos por servidor específico (Guilds)...")
+            for guild in self.guilds:
+                try:
+                    self.tree.copy_global_to(guild=guild)
+                    guild_synced = await self.tree.sync(guild=guild)
+                    logger.info(f" 👉 Sincronizados {len(guild_synced)} comandos en '{guild.name}'")
+                except Exception as e_guild:
+                    logger.warning(f" Error sincronizando comandos en {guild.name}: {e_guild}")
+
+            logger.info(" Limpiando comandos globales en Discord para destruir duplicados...")
+            self.tree.clear_commands(guild=None)
+            await self.tree.sync(guild=None)
+            logger.info(" ✅ Caché de comandos Discord actualizada perfectamente.")
+            
+        except Exception as e:
+            logger.error(f" Error al sincronizar árbol de comandos: {e}", exc_info=True)
 
         # Restaurar ofertas pendientes al reiniciar
         await self._restaurar_ofertas_pendientes()
@@ -160,7 +165,7 @@ class LigaBot(commands.Bot):
         logger.info('📢 Tarea de Anuncios Globales activada (intervalo 15s).')
 
         # Iniciar tarea del Fundador de Clubes Híbrido
-        if hasattr(self, 'fundador_task') and not self.fundador_task.is_running():
+        if not self.fundador_task.is_running():
             self.fundador_task.start()
         logger.info('🏗️ Listener de Fundación de Clubes (Web) activado (intervalo 10s).')
 
@@ -317,8 +322,6 @@ class LigaBot(commands.Bot):
             
             # 1.5 Refrescar Configuración Global en Memoria
             try:
-                from utils import get_bot_config
-                import config
                 cfg = await get_bot_config()
                 config.LIMITE_PLANTILLA = cfg.get("limite_plantilla", config.LIMITE_PLANTILLA)
                 config.CANAL_FICHAJES_ID = cfg.get("canal_fichajes", config.CANAL_FICHAJES_ID)
@@ -369,7 +372,7 @@ class LigaBot(commands.Bot):
                                        "✅ Todos los jugadores están ahora en Agentes Libres\n" +
                                        "✅ Los presupuestos han sido reseteados",
                             color=discord.Color.orange(),
-                            timestamp=datetime.utcnow()
+                            timestamp=datetime.now(timezone.utc)
                         )
                         embed.set_footer(text="Sincronización automática Bot ↔ Web")
                         await canal_sistema.send(embed=embed)
@@ -380,20 +383,19 @@ class LigaBot(commands.Bot):
                     # Limpiar la bandera para no repetir
                     await status_col.update_one(
                         {'_id': 'bot_commands'},
-                        {'$set': {'force_full_reset': False, 'full_reset_processed_at': datetime.utcnow()}}
+                        {'$set': {'force_full_reset': False, 'full_reset_processed_at': datetime.now(timezone.utc)}}
                     )
             
-            # 2.2 Detectar sync de comandos (comportamiento existente)
+            # 2.2 Detectar sync de comandos (sincronización por guild, no global)
             if command_doc and command_doc.get('force_sync'):
-                logger.info("⚡ Comando remoto recibido: Forzando Sincronización de Slash Commands...")
+                logger.info("⚡ Comando remoto recibido: Forzando Sincronización de Slash Commands por servidor...")
                 try:
-                    # Usar bot.tree si self.tree no está disponible
-                    tree = getattr(self, 'tree', getattr(bot, 'tree', None))
-                    if tree:
-                        synced = await tree.sync()
-                        logger.info(f"✅ Sincronizados {len(synced)} comandos de barra remotamente.")
-                    else:
-                        logger.error("❌ No se pudo acceder al CommandTree")
+                    for guild in self.guilds:
+                        try:
+                            synced = await self.tree.sync(guild=guild)
+                            logger.info(f"✅ Sincronizados {len(synced)} comandos en '{guild.name}' remotamente.")
+                        except Exception as e_guild:
+                            logger.warning(f"❌ Error sincronizando en {guild.name}: {e_guild}")
                 except Exception as sync_e:
                     logger.error(f"❌ Error al sincronizar remotamente: {sync_e}")
                 finally:
@@ -434,7 +436,7 @@ class LigaBot(commands.Bot):
                         title=f"🔔 {titulo}",
                         description=mensaje,
                         color=color_int,
-                        timestamp=datetime.utcnow()
+                        timestamp=datetime.now(timezone.utc)
                     )
                     
                     if imagen_url:
@@ -468,7 +470,7 @@ class LigaBot(commands.Bot):
                     # Marcar como procesado independientemente de si se envió con éxito o no a discord
                     await anuncios_col.update_one(
                         {"_id": anuncio["_id"]},
-                        {"$set": {"procesado": True, "procesado_en": datetime.utcnow()}}
+                        {"$set": {"procesado": True, "procesado_en": datetime.now(timezone.utc)}}
                     )
                     
                 except Exception as ex_item:
@@ -644,7 +646,7 @@ class LigaBot(commands.Bot):
                 if logo_url:
                     embed.set_thumbnail(url=logo_url)
                 embed.set_footer(text="Ministerio de GBLEAGUES", icon_url=self.user.display_avatar.url)
-                embed.timestamp = datetime.utcnow()
+                embed.timestamp = datetime.now(timezone.utc)
                 
                 await canal_anuncios.send(embed=embed)
 

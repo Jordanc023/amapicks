@@ -59,8 +59,10 @@ async def generar_imagen_plantilla(nombre_equipo, color_hex, escudo_url, dt_nomb
     - jugadores = [(nombre_jugador, boolean_es_dt), ...]
     """
     WIDTH = 1080
-    # Auto-expandir el lienzo hacia abajo si hay muchísimos jugadores (más de 12)
-    HEIGHT = 1024 + max(0, (len(jugadores)-10)*65) 
+    # Auto-expandir el lienzo hacia abajo dinámicamente según filas necesarias (3 columnas)
+    filas = (max(len(jugadores), 1) + 2) // 3
+    HEIGHT = 550 + (filas * (85 + 20)) # Alto base cabecera + filas con sus márgenes
+    HEIGHT = max(HEIGHT, 700) # Altura mínima preventiva
     
     # 1. Lienzo Oscuro Global (Fondo base Negro Profundo)
     img = Image.new('RGBA', (WIDTH, HEIGHT), color=(10, 10, 12, 255))
@@ -164,21 +166,18 @@ async def generar_imagen_plantilla(nombre_equipo, color_hex, escudo_url, dt_nomb
         texto_vacio = "LA PLANTILLA ESTÁ VACÍA"
         draw.text((WIDTH//2 - 180, y_offset + 50), texto_vacio, font=font_dt, fill=(150, 150, 150, 255))
     
-    col_width = WIDTH // 2
-    box_width = 400
-    box_height = 90
+    box_width = 330
+    box_height = 85
     
-    # Coordenadas X para las 2 columnas
-    col1_x = (col_width // 2) - (box_width // 2) + 20
-    col2_x = col_width + (col_width // 2) - (box_width // 2) - 20
-    
-    current_col = 1
-    current_y_col1 = y_offset
-    current_y_col2 = y_offset
+    # Coordenadas X para las 3 columnas, perfectamente balanceadas (Lienzo 1080px)
+    # Margen izquierdo: 20px | Margen interno: 25px | Ancho de caja: 330px
+    cols_x = [20, 375, 730]
+    cols_y = [y_offset, y_offset, y_offset]
     
     for idx, (j_nombre, is_dt) in enumerate(jugadores):
-        x = col1_x if current_col == 1 else col2_x
-        y = current_y_col1 if current_col == 1 else current_y_col2
+        current_col = idx % 3
+        x = cols_x[current_col]
+        y = cols_y[current_col]
         
         # Panel de fondo del jugador (Cristal Oscuro)
         draw.rounded_rectangle(
@@ -191,32 +190,31 @@ async def generar_imagen_plantilla(nombre_equipo, color_hex, escudo_url, dt_nomb
         
         # Barra lateral de color del equipo (Decoración)
         draw.rounded_rectangle(
-            [x, y, x + 12, y + box_height],
+            [x, y, x + 10, y + box_height],
             radius=4,
             fill=(color_rgb[0], color_rgb[1], color_rgb[2], 255)
         )
         
         # Nombre del Jugador
         p_text = j_nombre.upper()
-        draw.text((x + 35, y + 25), p_text, font=font_box, fill=(255, 255, 255, 255))
+        # Truncamiento de seguridad anti-overflow
+        if len(p_text) > 14:
+            p_text = p_text[:12] + "..."
+            
+        draw.text((x + 28, y + 25), p_text, font=font_box, fill=(0, 0, 0, 255))
         
         # Etiqueta especial si es el Capitán/DT que también juega
         if is_dt:
             # Pastilla dorada
             draw.rounded_rectangle(
-                [x + box_width - 90, y + 30, x + box_width - 15, y + 60],
+                [x + box_width - 70, y + 30, x + box_width - 10, y + 60],
                 radius=8,
                 fill=(255, 215, 0, 200) # Dorado
             )
-            draw.text((x + box_width - 80, y + 34), "CAP", font=font_tag, fill=(0, 0, 0, 255))
+            draw.text((x + box_width - 64, y + 34), "CAP", font=font_tag, fill=(0, 0, 0, 255))
         
-        # Siguiente iteración
-        if current_col == 1:
-            current_y_col1 += box_height + 20
-            current_col = 2
-        else:
-            current_y_col2 += box_height + 20
-            current_col = 1
+        # Siguiente iteración vertical
+        cols_y[current_col] += box_height + 20
 
     # Convertir a RGB sólido para guardar compatible como PNG
     img_final = img.convert('RGB')
@@ -241,7 +239,7 @@ async def generar_tarjeta_jugador(nombre_jugador, avatar_url, equipo_nombre, col
 
     color_rgb = hex_to_rgb(color_hex) if color_hex and color_hex != "#1a1a1a" else (212, 175, 55)
     ACCENT = color_rgb
-    GOLD   = (212, 175, 55)
+    GOLD   = ACCENT  # Ahora los acentos dorados son 100% dinámicos según el color del equipo
 
     img = Image.new('RGBA', (W, H), BG)
     draw = ImageDraw.Draw(img, 'RGBA')
