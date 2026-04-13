@@ -1,10 +1,10 @@
 module.exports = {
     apps: [
         {
-            name: "gbleagues-bot",
+            name: "amapicks-bot",
             script: "main.py",
-            interpreter: "/home/jordanvps/amapicks/venv/bin/python",
-            cwd: "/home/jordanvps/amapicks",
+            interpreter: "/home/amarelita/amapicks/venv/bin/python",
+            cwd: "/home/amarelita/amapicks",
             watch: false,
             autorestart: true,
             max_restarts: 10,
@@ -17,18 +17,18 @@ module.exports = {
             env_production: {
                 NODE_ENV: "production"
             },
-            log_file: "/home/jordanvps/amapicks/logs/bot-combined.log",
-            out_file: "/home/jordanvps/amapicks/logs/bot-out.log",
-            error_file: "/home/jordanvps/amapicks/logs/bot-error.log",
+            log_file: "/home/amarelita/amapicks/logs/bot-combined.log",
+            out_file: "/home/amarelita/amapicks/logs/bot-out.log",
+            error_file: "/home/amarelita/amapicks/logs/bot-error.log",
             log_date_format: "YYYY-MM-DD HH:mm:ss Z",
             merge_logs: true,
             time: true
         },
         {
-            name: "gbleagues-backend",
-            script: "/home/jordanvps/amapicks/venv/bin/python",
+            name: "amapicks-backend",
+            script: "/home/amarelita/amapicks/venv/bin/python",
             args: "-m uvicorn main:app --host 0.0.0.0 --port 8001",
-            cwd: "/home/jordanvps/amapicks/web/backend",
+            cwd: "/home/amarelita/amapicks/web/backend",
             watch: false,
             autorestart: true,
             max_restarts: 10,
@@ -41,18 +41,18 @@ module.exports = {
             env_production: {
                 NODE_ENV: "production"
             },
-            log_file: "/home/jordanvps/amapicks/logs/backend-combined.log",
-            out_file: "/home/jordanvps/amapicks/logs/backend-out.log",
-            error_file: "/home/jordanvps/amapicks/logs/backend-error.log",
+            log_file: "/home/amarelita/amapicks/logs/backend-combined.log",
+            out_file: "/home/amarelita/amapicks/logs/backend-out.log",
+            error_file: "/home/amarelita/amapicks/logs/backend-error.log",
             log_date_format: "YYYY-MM-DD HH:mm:ss Z",
             merge_logs: true,
             time: true
         },
         {
-            name: "gbleagues-frontend",
+            name: "amapicks-frontend",
             script: "npx",
             args: "serve dist -l 5173 -s",
-            cwd: "/home/jordanvps/amapicks/web/frontend",
+            cwd: "/home/amarelita/amapicks/web/frontend",
             watch: false,
             autorestart: true,
             max_restarts: 5,
@@ -65,9 +65,9 @@ module.exports = {
             env_production: {
                 NODE_ENV: "production"
             },
-            log_file: "/home/jordanvps/amapicks/logs/frontend-combined.log",
-            out_file: "/home/jordanvps/amapicks/logs/frontend-out.log",
-            error_file: "/home/jordanvps/amapicks/logs/frontend-error.log",
+            log_file: "/home/amarelita/amapicks/logs/frontend-combined.log",
+            out_file: "/home/amarelita/amapicks/logs/frontend-out.log",
+            error_file: "/home/amarelita/amapicks/logs/frontend-error.log",
             log_date_format: "YYYY-MM-DD HH:mm:ss Z",
             merge_logs: true,
             time: true
