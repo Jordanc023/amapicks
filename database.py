@@ -499,6 +499,16 @@ async def registrar_resultado(partido_id, goles_local: int, goles_visitante: int
         goles_visitante=goles_visitante
     )
 
+    # Procesar cesiones: decrementar partidos de jugadores prestados
+    try:
+        jugadores_devueltos = await procesar_cesiones_post_partido(
+            partido['equipo_local'], partido['equipo_visitante']
+        )
+        if jugadores_devueltos:
+            logger.info(f"📋 {len(jugadores_devueltos)} cesión(es) finalizada(s) tras partido.")
+    except Exception as e:
+        logger.error(f"Error procesando cesiones post-partido: {e}", exc_info=True)
+
     return True
 
 
@@ -818,3 +828,84 @@ async def resetear_tabla_posiciones(guild_id: str) -> int:
     tabla_col = get_collection('tabla_posiciones')
     result = await tabla_col.delete_many({'guild_id': str(guild_id)})
     return result.deleted_count
+
+
+# ============================================
+# SISTEMA DE CESIONES (PRÉSTAMOS)
+# ============================================
+
+async def procesar_cesiones_post_partido(equipo_local: str, equipo_visitante: str) -> list:
+    """
+    Después de registrar un resultado, decrementa los partidos de cesión
+    de los jugadores cedidos en ambos equipos.
+    Si un jugador llegó a 0 partidos restantes, lo devuelve a su equipo de origen.
+    Retorna una lista de dicts con los jugadores devueltos para anunciar.
+    """
+    jugadores_col = get_collection('jugadores')
+    jugadores_devueltos = []
+
+    # Buscar jugadores cedidos en ambos equipos que jugaron
+    for equipo in [equipo_local, equipo_visitante]:
+        cursor = jugadores_col.find({
+            'equipo': equipo,
+            'es_cesion': True,
+            'partidos_cesion': {'$gt': 0}
+        })
+        cedidos = await cursor.to_list(length=50)
+
+        for jugador in cedidos:
+            nuevos_partidos = jugador['partidos_cesion'] - 1
+
+            if nuevos_partidos <= 0:
+                # Cesión terminada: devolver al equipo de origen
+                equipo_origen = jugador.get('equipo_origen', None)
+                if equipo_origen:
+                    await jugadores_col.update_one(
+                        {'discord_id': jugador['discord_id']},
+                        {
+                            '$set': {'equipo': equipo_origen},
+                            '$unset': {
+                                'es_cesion': '',
+                                'partidos_cesion': '',
+                                'equipo_origen': '',
+                                'fecha_cesion': ''
+                            }
+                        }
+                    )
+                    jugadores_devueltos.append({
+                        'discord_id': jugador['discord_id'],
+                        'nombre': jugador.get('nombre', '???'),
+                        'equipo_temporal': equipo,
+                        'equipo_origen': equipo_origen
+                    })
+                    logger.info(
+                        f"📋 Cesión finalizada: {jugador.get('nombre')} vuelve a {equipo_origen} "
+                        f"(estaba en {equipo})"
+                    )
+                else:
+                    # Fallback: si no hay equipo_origen, solo limpiar flags
+                    await jugadores_col.update_one(
+                        {'discord_id': jugador['discord_id']},
+                        {'$unset': {
+                            'es_cesion': '',
+                            'partidos_cesion': '',
+                            'equipo_origen': '',
+                            'fecha_cesion': ''
+                        }}
+                    )
+                    logger.warning(
+                        f"⚠️ Cesión finalizada sin equipo_origen para {jugador.get('nombre')}"
+                    )
+            else:
+                # Aún quedan partidos: solo decrementar
+                await jugadores_col.update_one(
+                    {'discord_id': jugador['discord_id']},
+                    {'$set': {'partidos_cesion': nuevos_partidos}}
+                )
+                logger.debug(
+                    f"📋 Cesión: {jugador.get('nombre')} le quedan {nuevos_partidos} partidos "
+                    f"en {equipo}"
+                )
+
+    return jugadores_devueltos
+

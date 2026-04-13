@@ -38,7 +38,7 @@ class AyudaCog(commands.Cog):
         dts = """
         `/fichar @Jugador` - Enviar oferta a jugador (Requiere Aceptar)
         `/despedir @Jugador` - Sacar jugador de la plantilla
-        `/intercambio @MiJug @SuJug` - Iniciar trueque
+        `/cesion @Jugador [partidos]` - Pedir prestado (3/5/10 PJ)
         `/mi_rol [manager/jugador]` - manager (0 cupo) | jugador (1 cupo)
         `/renunciar` - Renunciar al cargo de DT
         """

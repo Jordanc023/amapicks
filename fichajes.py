@@ -680,6 +680,251 @@ class OfertaFichajeView(View):
 
 
 # ============================================
+# FUNCIÓN STANDALONE: EJECUTAR CESIÓN (PRÉSTAMO)
+# ============================================
+
+async def ejecutar_cesion_clubes(bot, interaction, dt_comprador_id, dt_vendedor_id,
+                                  jugador, equipo_comprador, equipo_vendedor, monto, partidos):
+    """
+    Ejecuta una cesión (préstamo) entre clubes: mueve al jugador
+    temporalmente al equipo comprador por X partidos.
+    El jugador conserva su 'equipo_origen' para saber a dónde volver.
+    """
+    try:
+        jugadores_col = get_collection('jugadores')
+        equipos_col = get_collection('equipos')
+
+        # Resolver el guild
+        guild = interaction.guild
+        if not guild:
+            for g in bot.guilds:
+                if g.get_member(jugador.id):
+                    guild = g
+                    break
+        if not guild:
+            logger.error("No se encontró el servidor para ejecutar la cesión.")
+            return
+
+        # Obtener miembro en el guild
+        miembro = guild.get_member(jugador.id)
+        if not miembro:
+            try:
+                miembro = await guild.fetch_member(jugador.id)
+            except Exception:
+                logger.error(f"No se pudo encontrar al jugador {jugador.id} en el servidor.")
+                return
+
+        # 1. Actualizar BD: mover jugador temporalmente
+        await jugadores_col.update_one(
+            {'discord_id': str(jugador.id)},
+            {'$set': {
+                'equipo': equipo_comprador,
+                'equipo_origen': equipo_vendedor,
+                'es_cesion': True,
+                'partidos_cesion': partidos,
+                'fecha_cesion': datetime.now().isoformat()
+            }}
+        )
+
+        # 2. Actualizar presupuestos (comprador paga, vendedor cobra)
+        await equipos_col.update_one(
+            {'nombre': equipo_comprador},
+            {'$inc': {'presupuesto': -monto}}
+        )
+        await equipos_col.update_one(
+            {'nombre': equipo_vendedor},
+            {'$inc': {'presupuesto': monto}}
+        )
+
+        # 3. Cambiar roles en Discord
+        rol_vendedor = discord.utils.get(guild.roles, name=equipo_vendedor)
+        rol_comprador = discord.utils.get(guild.roles, name=equipo_comprador)
+
+        if rol_vendedor and rol_vendedor in miembro.roles:
+            await miembro.remove_roles(rol_vendedor)
+        if rol_comprador:
+            await miembro.add_roles(rol_comprador)
+
+        # 4. Anuncio público en canal de fichajes
+        canal_noticias = bot.get_channel(config.CANAL_FICHAJES_ID)
+        if canal_noticias:
+            embed = discord.Embed(
+                title="📋 CESIÓN OFICIAL",
+                description=(
+                    f"**{miembro.mention}** ha sido cedido del **{equipo_vendedor}** "
+                    f"al **{equipo_comprador}** por **{partidos} partidos** "
+                    f"a cambio de `${monto:,}`."
+                ),
+                color=discord.Color.from_rgb(0, 191, 255)
+            )
+            embed.add_field(name="⏳ Duración", value=f"{partidos} partidos", inline=True)
+            embed.add_field(name="💰 Costo", value=f"${monto:,}", inline=True)
+            embed.add_field(name="🔄 Retorno a", value=equipo_vendedor, inline=True)
+            embed.set_thumbnail(url=miembro.display_avatar.url)
+            embed.set_footer(text=f"Cesión completada • {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+            await canal_noticias.send(embed=embed)
+
+        # 5. Notificar al DT comprador
+        try:
+            comprador = await bot.fetch_user(int(dt_comprador_id))
+            if comprador:
+                await comprador.send(
+                    f"✅ ¡Cesión completada! **{jugador.name}** jugará en tu equipo "
+                    f"**{equipo_comprador}** por **{partidos} partidos**."
+                )
+        except Exception as e:
+            logger.error(f"No se pudo notificar al DT comprador sobre la cesión: {e}")
+
+        # 6. Log de auditoría
+        await log_action(
+            guild_id=str(guild.id),
+            action_type=config.AuditAction.CESION,
+            actor_id=str(dt_comprador_id),
+            actor_name=f"DT {equipo_comprador}",
+            target_id=str(jugador.id),
+            target_name=jugador.name,
+            details={
+                'tipo': 'cesion',
+                'equipo_origen': equipo_vendedor,
+                'equipo_destino': equipo_comprador,
+                'monto': monto,
+                'partidos': partidos
+            }
+        )
+
+        # 7. Limpiar oferta pendiente
+        await eliminar_oferta_pendiente(str(dt_comprador_id), str(jugador.id))
+
+        logger.info(
+            f"📋 Cesión: {jugador.name} → {equipo_comprador} "
+            f"(${monto:,}, {partidos} partidos, origen: {equipo_vendedor})"
+        )
+
+    except Exception as e:
+        logger.error(f"Error ejecutando cesión entre clubes: {e}", exc_info=True)
+
+
+# ============================================
+# VISTA: CONFIRMACIÓN DE CESIÓN (DT vendedor decide)
+# ============================================
+
+class ConfirmacionCesionView(View):
+    """Vista interactiva enviada por DM al DT vendedor para aceptar o rechazar una cesión."""
+
+    def __init__(self, bot, dt_comprador_id, dt_vendedor_id, jugador, equipo_comprador, equipo_vendedor, monto, partidos):
+        super().__init__(timeout=86400)  # 24 horas
+        self.bot = bot
+        self.dt_comprador_id = dt_comprador_id
+        self.dt_vendedor_id = dt_vendedor_id
+        self.jugador = jugador
+        self.equipo_comprador = equipo_comprador
+        self.equipo_vendedor = equipo_vendedor
+        self.monto = monto
+        self.partidos = partidos
+        self.respondido = False
+
+    @discord.ui.button(label="✅ Ceder Jugador", style=discord.ButtonStyle.green)
+    async def aceptar_cesion(self, interaction: discord.Interaction, button: Button):
+        if str(interaction.user.id) != self.dt_vendedor_id:
+            await interaction.response.send_message("❌ No eres el dueño de este equipo.", ephemeral=True)
+            return
+
+        if self.respondido:
+            await interaction.response.send_message("⚠️ Esta solicitud ya fue gestionada.", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        self.respondido = True
+
+        # Desactivar botones
+        for child in self.children:
+            child.disabled = True
+
+        embed = interaction.message.embeds[0]
+        embed.color = discord.Color.brand_green()
+        embed.title = "✅ CESIÓN ACEPTADA"
+        embed.set_footer(text="Procesando préstamo...")
+        await interaction.message.edit(embed=embed, view=self)
+
+        await ejecutar_cesion_clubes(
+            self.bot, interaction, self.dt_comprador_id, self.dt_vendedor_id,
+            self.jugador, self.equipo_comprador, self.equipo_vendedor, self.monto, self.partidos
+        )
+
+    @discord.ui.button(label="❌ Rechazar Cesión", style=discord.ButtonStyle.red)
+    async def rechazar_cesion(self, interaction: discord.Interaction, button: Button):
+        if str(interaction.user.id) != self.dt_vendedor_id:
+            await interaction.response.send_message("❌ No eres el dueño de este equipo.", ephemeral=True)
+            return
+
+        if self.respondido:
+            return
+
+        await interaction.response.defer()
+        self.respondido = True
+
+        for child in self.children:
+            child.disabled = True
+
+        embed = interaction.message.embeds[0]
+        embed.color = discord.Color.brand_red()
+        embed.title = "❌ CESIÓN RECHAZADA"
+        embed.set_footer(text="Has declinado el préstamo.")
+        await interaction.message.edit(embed=embed, view=self)
+
+        # Notificar al comprador
+        try:
+            comprador = await self.bot.fetch_user(int(self.dt_comprador_id))
+            if comprador:
+                await comprador.send(
+                    f"❌ El **{self.equipo_vendedor}** ha **RECHAZADO** tu solicitud de cesión "
+                    f"por **{self.jugador.name}** ({self.partidos} partidos, ${self.monto:,})."
+                )
+        except Exception as e:
+            logger.error(f"No se pudo notificar rechazo de cesión al DT comprador: {e}")
+
+        # Limpiar oferta pendiente
+        await eliminar_oferta_pendiente(str(self.dt_comprador_id), str(self.jugador.id))
+
+        # Anuncio en canal de fichajes
+        canal_noticias = self.bot.get_channel(config.CANAL_FICHAJES_ID)
+        if canal_noticias:
+            embed_noticia = discord.Embed(
+                title="❌ CESIÓN RECHAZADA",
+                description=(
+                    f"El **{self.equipo_vendedor}** ha rechazado la solicitud de cesión "
+                    f"del **{self.equipo_comprador}** por **{self.jugador.name}** "
+                    f"({self.partidos} partidos).\n\n"
+                    f"*El acuerdo no se concretó.*"
+                ),
+                color=discord.Color.brand_red()
+            )
+            embed_noticia.set_footer(text="El DT declinó la cesión")
+            await canal_noticias.send(embed=embed_noticia)
+
+    async def on_timeout(self):
+        """Expiración de la solicitud de cesión (24h)."""
+        try:
+            await eliminar_oferta_pendiente(str(self.dt_comprador_id), str(self.jugador.id))
+
+            canal_noticias = self.bot.get_channel(config.CANAL_FICHAJES_ID)
+            if canal_noticias:
+                embed = discord.Embed(
+                    title="⏱️ CESIÓN EXPIRADA",
+                    description=(
+                        f"El plazo de negociación ha vencido.\n"
+                        f"La solicitud de cesión del **{self.equipo_comprador}** por "
+                        f"**{self.jugador.name}** del **{self.equipo_vendedor}** ha expirado.\n\n"
+                        f"*El acuerdo no se concretó.*"
+                    ),
+                    color=discord.Color.dark_grey()
+                )
+                await canal_noticias.send(embed=embed)
+        except Exception as e:
+            logger.warning(f"Error al procesar expiración de cesión: {e}")
+
+
+# ============================================
 # COG PRINCIPAL: FICHAJES
 # ============================================
 
@@ -1021,6 +1266,158 @@ class FichajesCog(commands.Cog):
             from database import eliminar_oferta_pendiente
             await eliminar_oferta_pendiente(str(ctx.author.id), str(jugador.id))
             await ctx.send(f"❌ ¡Operación fallida! **{jugador.mention}** tiene sus Mensajes Directos cerrados.")
+    # ============================================
+    # COMANDO: /cesion
+    # ============================================
+    @commands.hybrid_command(name="cesion", description="Solicitar la cesión (préstamo) de un jugador por X partidos")
+    @app_commands.describe(
+        jugador="El jugador que quieres pedir prestado",
+        partidos="Duración de la cesión en partidos"
+    )
+    @app_commands.choices(partidos=[
+        app_commands.Choice(name="3 partidos (15% del valor)", value=3),
+        app_commands.Choice(name="5 partidos (25% del valor)", value=5),
+        app_commands.Choice(name="10 partidos (50% del valor)", value=10),
+    ])
+    async def cesion(self, ctx, jugador: discord.Member, partidos: app_commands.Choice[int]):
+        """Solicita la cesión temporal de un jugador que pertenece a otro equipo."""
+        await ctx.defer()
+
+        pj = partidos.value
+
+        valido, equipo_dt, equipo_jugador, es_agente_libre = await self._validar_condiciones_fichaje(ctx, jugador)
+        if not valido:
+            return
+
+        if es_agente_libre:
+            await ctx.send("❌ Este jugador es Agente Libre. Usa `/fichar` para contratarlo directamente.")
+            return
+
+        # Verificar que el jugador no esté ya en cesión
+        from database import get_collection, crear_oferta_pendiente
+        jugadores_col = get_collection('jugadores')
+        jugador_db = await jugadores_col.find_one({'discord_id': str(jugador.id)})
+
+        if jugador_db and jugador_db.get('es_cesion', False):
+            await ctx.send(f"❌ **{jugador.display_name}** ya está cedido a otro equipo. Debe terminar su préstamo actual primero.")
+            return
+
+        # Calcular costo de cesión
+        market_value = 0
+        if jugador_db:
+            market_value = jugador_db.get('clausula') or jugador_db.get('precio') or 0
+
+        if market_value <= 0:
+            await ctx.send("❌ El jugador no tiene un valor de mercado definido. Contacta a un administrador.")
+            return
+
+        try:
+            monto = calcular_costo_cesion(pj, market_value)
+        except ValueError:
+            await ctx.send("❌ Duración de cesión inválida.")
+            return
+
+        # Verificar presupuesto
+        equipos_col = get_collection('equipos')
+        equipo_comprador_doc = await equipos_col.find_one({'nombre': equipo_dt})
+        presupuesto = equipo_comprador_doc.get('presupuesto', 0) if equipo_comprador_doc else 0
+
+        if monto > presupuesto:
+            await ctx.send(
+                f"❌ **Fondos insuficientes.** El costo de la cesión ({pj} partidos) es "
+                f"`${monto:,}` y tu presupuesto es `${presupuesto:,}`."
+            )
+            return
+
+        # Buscar al DT vendedor
+        import config
+        dt_vendedor_member = None
+        rol_equipo_vendedor = discord.utils.get(ctx.guild.roles, name=equipo_jugador)
+        if rol_equipo_vendedor:
+            for miembro in rol_equipo_vendedor.members:
+                if any(r.name == config.ROL_DE_DT for r in miembro.roles):
+                    dt_vendedor_member = miembro
+                    break
+
+        if not dt_vendedor_member:
+            await ctx.send(f"❌ No se encontró al DT del **{equipo_jugador}** en el servidor.")
+            return
+
+        # Crear oferta pendiente
+        await crear_oferta_pendiente(str(ctx.author.id), str(jugador.id), equipo_dt, expira_minutos=1440)
+
+        # Enviar DM al DT vendedor con la vista interactiva
+        view = ConfirmacionCesionView(
+            self.bot, str(ctx.author.id), str(dt_vendedor_member.id),
+            jugador, equipo_dt, equipo_jugador, monto, pj
+        )
+
+        porcentaje = {3: '15%', 5: '25%', 10: '50%'}
+        embed_dm = discord.Embed(
+            title="📋 SOLICITUD DE CESIÓN",
+            description=(
+                f"El **{equipo_dt}** quiere pedir prestado a **{jugador.name}**.\n\n"
+                f"⏳ **Duración:** {pj} partidos\n"
+                f"💰 **Pago por cesión:** `${monto:,}` ({porcentaje.get(pj, '?')} del valor de mercado)\n"
+                f"📊 **Valor de mercado:** `${market_value:,}`\n"
+                f"👤 **Jugador:** {jugador.mention}\n\n"
+                f"El jugador volverá automáticamente a tu equipo al finalizar los {pj} partidos.\n\n"
+                f"**¿Aceptas ceder al jugador?**"
+            ),
+            color=discord.Color.from_rgb(0, 191, 255)
+        )
+        embed_dm.set_thumbnail(url=jugador.display_avatar.url)
+        embed_dm.set_footer(text="Tienes 24 horas para decidir")
+
+        try:
+            await dt_vendedor_member.send(embed=embed_dm, view=view)
+
+            from datetime import datetime
+            canal_noticias = self.bot.get_channel(config.CANAL_FICHAJES_ID)
+            if canal_noticias:
+                escudo_comprador = equipo_comprador_doc.get('escudo_url') if equipo_comprador_doc else None
+                embed_canal = discord.Embed(
+                    title="📋 SOLICITUD DE CESIÓN",
+                    description=(
+                        f"Negociaciones en curso: El **{equipo_dt}** ha solicitado "
+                        f"la cesión de **{jugador.mention}** del **{equipo_jugador}** "
+                        f"por **{pj} partidos**."
+                    ),
+                    color=discord.Color.from_rgb(0, 191, 255),
+                    timestamp=datetime.now()
+                )
+                embed_canal.set_author(
+                    name=f"Oficial {equipo_dt}",
+                    icon_url=escudo_comprador if escudo_comprador else ctx.author.display_avatar.url
+                )
+                embed_canal.set_thumbnail(url=jugador.display_avatar.url)
+                embed_canal.add_field(
+                    name="💰 Pago por Cesión",
+                    value=f"**${monto:,}** ({porcentaje.get(pj, '?')} del mercado)",
+                    inline=True
+                )
+                embed_canal.add_field(
+                    name="⏳ Duración",
+                    value=f"**{pj} partidos**",
+                    inline=True
+                )
+                embed_canal.add_field(
+                    name="⏱️ Estado",
+                    value=f"Esperando respuesta del DT de {equipo_jugador} (24h)",
+                    inline=False
+                )
+                await canal_noticias.send(embed=embed_canal)
+
+            await ctx.send(
+                f"✅ ¡Solicitud de cesión enviada al DT del **{equipo_jugador}**!\n"
+                f"📋 Jugador: **{jugador.display_name}** | ⏳ {pj} partidos | 💰 ${monto:,}"
+            )
+            logger.info(f"📋 Cesión solicitada: {equipo_dt} pide a {jugador.name} del {equipo_jugador} ({pj} PJ, ${monto})")
+
+        except discord.Forbidden:
+            from database import eliminar_oferta_pendiente
+            await eliminar_oferta_pendiente(str(ctx.author.id), str(jugador.id))
+            await ctx.send(f"❌ No se pudo enviar DM al DT del {equipo_jugador}. Tiene sus mensajes directos cerrados.")
 
     # ============================================
     # COMANDO: /despedir
